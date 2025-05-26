@@ -1,0 +1,707 @@
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useProductStore, useUserStore } from '../stores'
+import api from '../services/api'
+
+const router = useRouter()
+const productStore = useProductStore()
+const userStore = useUserStore()
+
+// 判断当前用户是否为管理员
+const isAdmin = computed(() => userStore.isAdmin)
+
+// 商品数据状态
+const products = ref([])
+const categories = ref([])
+const loading = ref(false)
+const error = ref('')
+
+// 分类筛选
+const selectedCategory = ref('')
+const filteredProducts = computed(() => {
+  return selectedCategory.value
+    ? products.value.filter(p => p.category === selectedCategory.value)
+    : products.value
+})
+
+/**
+ * 从后端API获取商品列表
+ * 接口地址: GET /api/products
+ * 请求参数: 无
+ * 返回数据格式: {
+ *   code: 200,
+ *   data: [
+ *     {
+ *       id: number,
+ *       name: string,
+ *       price: number,
+ *       image: string,
+ *       description: string,
+ *       category: string,
+ *       stock: number,
+ *       rating: number
+ *     }
+ *   ],
+ *   message: string
+ * }
+ * 主要处理逻辑:
+ * 1. 发送HTTP GET请求到后端Java服务
+ * 2. 后端从MySQL数据库查询商品表(products)
+ * 3. 前端接收数据并更新本地状态
+ * 4. 处理加载状态和错误状态
+ */
+const fetchProducts = async () => {
+  try {
+    loading.value = true
+    error.value = ''
+    
+    // 调用后端API获取商品列表
+    const response = await api.get('/products')
+    
+    // 更新本地商品数据
+    products.value = response.data || []
+    
+    // 提取商品分类（去重）
+    const categorySet = new Set(products.value.map(p => p.category))
+    categories.value = Array.from(categorySet)
+    
+    console.log('商品数据加载成功:', products.value.length, '个商品')
+  } catch (err) {
+    console.error('获取商品列表失败:', err)
+    error.value = '获取商品列表失败，请稍后重试'
+    
+    // 如果API调用失败，使用本地存储的商品数据作为备用
+    products.value = productStore.products
+    categories.value = productStore.categories
+  } finally {
+    loading.value = false
+  }
+}
+
+/**
+ * 从后端API获取商品分类列表
+ * 接口地址: GET /api/products/categories
+ * 请求参数: 无
+ * 返回数据格式: {
+ *   code: 200,
+ *   data: [string], // 分类名称数组
+ *   message: string
+ * }
+ * 主要处理逻辑:
+ * 1. 发送HTTP GET请求到后端Java服务
+ * 2. 后端从MySQL数据库查询商品分类表(categories)或从商品表聚合分类
+ * 3. 前端接收分类数据并更新本地状态
+ */
+const fetchCategories = async () => {
+  try {
+    const response = await api.get('/products/categories')
+    categories.value = response.data || []
+    console.log('商品分类加载成功:', categories.value)
+  } catch (err) {
+    console.error('获取商品分类失败:', err)
+    // 如果分类API失败，从商品数据中提取分类
+    const categorySet = new Set(products.value.map(p => p.category))
+    categories.value = Array.from(categorySet)
+  }
+}
+
+// 轮播图数据
+const carouselItems = [
+  {
+    id: 1,
+    title: '新鲜水果直达',
+    description: '从农场到餐桌，保证新鲜',
+    image: 'https://picsum.photos/id/292/1200/400',
+    link: '/'
+  },
+  {
+    id: 2,
+    title: '限时特惠',
+    description: '精选水果，限时折扣',
+    image: 'https://picsum.photos/id/429/1200/400',
+    link: '/'
+  },
+  {
+    id: 3,
+    title: '会员专享',
+    description: '会员享受更多优惠和服务',
+    image: 'https://picsum.photos/id/450/1200/400',
+    link: '/profile'
+  }
+]
+
+// 跳转到商品详情
+const goToProductDetail = (productId) => {
+  router.push(`/product/${productId}`)
+}
+
+// 添加到购物车的动画效果
+const showAddAnimation = ref(false)
+const animatingProductId = ref(null)
+
+/**
+ * 添加商品到购物车
+ * 接口地址: POST /api/cart/items
+ * 请求参数: {
+ *   productId: number, // 商品ID
+ *   quantity: number   // 购买数量，默认为1
+ * }
+ * 返回数据格式: {
+ *   code: 200,
+ *   data: {
+ *     id: number,        // 购物车项ID
+ *     productId: number, // 商品ID
+ *     quantity: number,  // 数量
+ *     addTime: string    // 添加时间
+ *   },
+ *   message: string
+ * }
+ * 主要处理逻辑:
+ * 1. 检查用户登录状态
+ * 2. 发送HTTP POST请求到后端Java服务
+ * 3. 后端将购物车数据存储到MySQL数据库的cart_items表
+ * 4. 前端显示添加成功的动画效果
+ * 5. 更新购物车图标的商品数量显示
+ */
+const addToCart = async (product, event) => {
+  // 阻止事件冒泡，避免触发卡片点击事件
+  event.stopPropagation()
+  
+  // 检查用户是否已登录
+  if (!userStore.isAuthenticated) {
+    // 未登录用户跳转到登录页面
+    router.push('/login')
+    return
+  }
+  
+  try {
+    // 设置动画效果
+    animatingProductId.value = product.id
+    showAddAnimation.value = true
+    
+    // 调用后端API添加到购物车
+    const response = await api.post('/cart/items', {
+      productId: product.id,
+      quantity: 1
+    })
+    
+    console.log('商品已添加到购物车:', response.data)
+    
+    // 显示成功提示
+    ElMessage.success(`${product.name} 已添加到购物车`)
+    
+  } catch (err) {
+    console.error('添加到购物车失败:', err)
+    ElMessage.error('添加到购物车失败，请稍后重试')
+  } finally {
+    // 动画结束后重置
+    setTimeout(() => {
+      showAddAnimation.value = false
+      animatingProductId.value = null
+    }, 500)
+  }
+}
+
+/**
+ * 组件挂载时的初始化逻辑
+ * 主要处理逻辑:
+ * 1. 页面加载时自动获取商品列表
+ * 2. 获取商品分类列表
+ * 3. 为后续的购物车、订单等功能预留接口调用位置
+ */
+onMounted(async () => {
+  // 并行获取商品数据和分类数据，提高页面加载速度
+  await Promise.all([
+    fetchProducts(),
+    fetchCategories()
+  ])
+})
+</script>
+
+<template>
+  <div class="home-container">
+    <!-- 轮播图 -->
+    <div class="carousel-section">
+      <el-carousel :interval="5000" type="card" height="300px">
+        <el-carousel-item v-for="item in carouselItems" :key="item.id">
+          <div class="carousel-content" :style="{ backgroundImage: `url(${item.image})` }">
+            <div class="carousel-overlay">
+              <h2>{{ item.title }}</h2>
+              <p>{{ item.description }}</p>
+            </div>
+          </div>
+        </el-carousel-item>
+      </el-carousel>
+    </div>
+    
+    <!-- 分类筛选 -->
+    <div class="category-section">
+      <h2 class="section-title">商品分类</h2>
+      <div class="category-tabs">
+        <el-radio-group v-model="selectedCategory" size="large" :disabled="loading">
+          <el-radio-button value="">全部</el-radio-button>
+          <el-radio-button v-for="category in categories" :key="category" :value="category">
+            {{ category }}
+          </el-radio-button>
+        </el-radio-group>
+      </div>
+    </div>
+    
+    <!-- 商品列表 -->
+    <div class="products-section">
+      <h2 class="section-title">{{ selectedCategory || '全部' }}商品</h2>
+      
+      <!-- 加载状态 -->
+      <div v-if="loading" class="loading-container">
+        <el-skeleton :rows="3" animated />
+        <div class="loading-text">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          正在加载商品数据...
+        </div>
+      </div>
+      
+      <!-- 错误状态 -->
+      <div v-else-if="error" class="error-container">
+        <el-alert
+          :title="error"
+          type="error"
+          show-icon
+          :closable="false"
+        >
+          <template #default>
+            <p>{{ error }}</p>
+            <el-button type="primary" size="small" @click="fetchProducts" style="margin-top: 10px;">
+              重新加载
+            </el-button>
+          </template>
+        </el-alert>
+      </div>
+      
+      <!-- 商品网格 -->
+      <div v-else-if="filteredProducts.length > 0" class="products-grid">
+        <div 
+          v-for="product in filteredProducts" 
+          :key="product.id" 
+          class="product-card"
+          @click="goToProductDetail(product.id)"
+        >
+          <div class="product-image">
+            <img :src="product.image || 'https://picsum.photos/id/' + (product.id + 100) + '/300/200'" :alt="product.name">
+            <div 
+              class="add-to-cart-button" 
+              @click="addToCart(product, $event)"
+              :class="{ 'animate-add': showAddAnimation && animatingProductId === product.id }"
+            >
+              <el-icon><Plus /></el-icon>
+            </div>
+          </div>
+          <div class="product-info">
+            <h3 class="product-name">{{ product.name }}</h3>
+            <div class="product-meta">
+              <span class="product-price">¥{{ product.price.toFixed(2) }}</span>
+              <div class="product-rating">
+                <el-rate 
+                  v-model="product.rating" 
+                  disabled 
+                  text-color="#ff9900"
+                  score-template="{value}"
+                  :show-score="true"
+                  :colors="['#ff9900', '#ff9900', '#ff9900']"
+                ></el-rate>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 无商品状态 -->
+      <div v-else class="empty-container">
+        <el-empty description="暂无商品数据">
+          <el-button type="primary" @click="fetchProducts">刷新数据</el-button>
+        </el-empty>
+      </div>
+    </div>
+    
+    <!-- 促销信息 -->
+    <div class="promo-section">
+      <div class="promo-card">
+        <el-icon><Van /></el-icon>
+        <div class="promo-content">
+          <h3>免费配送</h3>
+          <p>订单满99元免费配送</p>
+        </div>
+      </div>
+      <div class="promo-card">
+        <el-icon><GoodsFilled /></el-icon>
+        <div class="promo-content">
+          <h3>品质保证</h3>
+          <p>100%新鲜保证</p>
+        </div>
+      </div>
+      <div class="promo-card">
+        <el-icon><Service /></el-icon>
+        <div class="promo-content">
+          <h3>7x24客服</h3>
+          <p>随时为您服务</p>
+        </div>
+      </div>
+      <div class="promo-card">
+        <el-icon><RefreshRight /></el-icon>
+        <div class="promo-content">
+          <h3>无忧退换</h3>
+          <p>7天无理由退换</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style lang="scss" scoped>
+@use "sass:color";
+
+.home-container {
+  position: relative;
+}
+
+.home-container {
+  padding-bottom: 40px;
+}
+
+/* 轮播图样式 */
+.carousel-section {
+  margin-bottom: 40px;
+}
+
+.carousel-content {
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.carousel-overlay {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 40px;
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.7), transparent);
+  color: white;
+  
+  h2 {
+    font-size: 2rem;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+  
+  p {
+    font-size: 1.2rem;
+    max-width: 60%;
+  }
+}
+
+/* 分类筛选样式 */
+.category-section {
+  margin-bottom: 30px;
+}
+
+.section-title {
+  font-size: 1.5rem;
+  margin-bottom: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.category-tabs {
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: center;
+}
+
+/* 商品列表样式 */
+.products-section {
+  margin-bottom: 50px;
+}
+
+/* 加载状态样式 */
+.loading-container {
+  text-align: center;
+  padding: 40px 20px;
+  
+  .loading-text {
+    margin-top: 20px;
+    font-size: 1.1rem;
+    color: #666;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    
+    .el-icon {
+      font-size: 1.2rem;
+      color: #409eff;
+    }
+  }
+}
+
+/* 错误状态样式 */
+.error-container {
+  margin: 40px 0;
+  
+  .el-alert {
+    border-radius: 12px;
+    padding: 20px;
+    
+    .el-button {
+      border-radius: 8px;
+    }
+  }
+}
+
+/* 空数据状态样式 */
+.empty-container {
+  margin: 60px 0;
+  
+  .el-empty {
+    padding: 40px 20px;
+    
+    .el-button {
+      border-radius: 8px;
+      padding: 10px 20px;
+    }
+  }
+}
+
+.products-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 30px;
+}
+
+.product-card {
+  background: white;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 3px 15px rgba(0, 0, 0, 0.08);
+  transition: transform 0.3s, box-shadow 0.3s;
+  cursor: pointer;
+  position: relative;
+  
+  &:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+    
+    .add-to-cart-button {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+.product-image {
+  height: 240px;
+  overflow: hidden;
+  position: relative;
+  
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.5s;
+  }
+  
+  &:hover img {
+    transform: scale(1.05);
+  }
+}
+
+.add-to-cart-button {
+  position: absolute;
+  bottom: 15px;
+  right: 15px;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background-color: #ff6b6b;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.3s, transform 0.3s, background-color 0.3s;
+  z-index: 2;
+  font-size: 1.2rem;
+  
+  &:hover {
+    background-color: color.adjust(#ff6b6b, $lightness: -10%);
+  }
+  
+  &.animate-add {
+    animation: pulse 0.5s;
+  }
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.product-info {
+  padding: 20px;
+}
+
+.product-name {
+  font-size: 1.3rem;
+  margin-bottom: 10px;
+  font-weight: 500;
+  color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.product-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.product-price {
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: #ff6b6b;
+}
+
+.product-rating {
+  display: flex;
+  align-items: center;
+}
+
+/* 促销信息样式 */
+.promo-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px;
+  margin-top: 40px;
+}
+
+.promo-card {
+  display: flex;
+  align-items: center;
+  padding: 20px;
+  background-color: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  transition: transform 0.3s;
+  
+  &:hover {
+    transform: translateY(-5px);
+  }
+  
+  .el-icon {
+    font-size: 2rem;
+    color: #ff6b6b;
+    margin-right: 16px;
+  }
+}
+
+.promo-content {
+  h3 {
+    font-size: 1.1rem;
+    margin-bottom: 4px;
+    font-weight: 500;
+  }
+  
+  p {
+    font-size: 0.9rem;
+    color: #666;
+  }
+}
+
+/* 响应式设计 */
+@media (max-width: 992px) {
+  .products-grid {
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 20px;
+  }
+  
+  .product-image {
+    height: 220px;
+  }
+}
+
+@media (max-width: 768px) {
+  .carousel-overlay {
+    h2 {
+      font-size: 1.5rem;
+    }
+    
+  .products-grid {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px;
+  }
+  
+  .product-image {
+    height: 180px;
+  }
+  
+  .product-info {
+    padding: 15px;
+  }
+  
+  .product-name {
+    font-size: 1.1rem;
+  }
+  
+  .product-price {
+    font-size: 1.2rem;
+  }
+    
+    p {
+      font-size: 1rem;
+      max-width: 100%;
+    }
+  }
+  
+  .category-tabs {
+    overflow-x: auto;
+    padding-bottom: 10px;
+    justify-content: flex-start;
+    
+    .el-radio-group {
+      white-space: nowrap;
+    }
+  }
+  
+  .promo-section {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .products-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 16px;
+  }
+  
+  .product-image {
+    height: 150px;
+  }
+  
+  .promo-section {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
