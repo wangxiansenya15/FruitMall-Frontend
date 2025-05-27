@@ -1,34 +1,135 @@
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useUserStore } from '../stores'
 import { ElMessage } from 'element-plus'
+import api from '../services/api' // 导入API服务用于后端接口调用
 
 const userStore = useUserStore()
 
 // 用户信息
 const user = computed(() => userStore.user)
 
+// 加载用户信息状态
+const loadingUserInfo = ref(false)
+
+// 获取用户详细信息
+const fetchUserInfo = async () => {
+  if (!userStore.isAuthenticated) return
+  
+  loadingUserInfo.value = true
+  try {
+    // 调用后端API获取最新的用户详细信息
+    const response = await api.get('/user/profile')
+    
+    // 处理后端返回的嵌套数据结构
+    const userData = response.data.data
+    
+    // 提取details对象中的数据
+    const userDetails = userData.details || {}
+    
+    // 构建完整的用户信息对象
+    const completeUserData = {
+      username: userData.username,
+      nickname: userData.nickname,
+      email: userData.email,
+      phone: userData.phone,
+      // 从details中提取字段并添加到用户对象根级别
+      description: userDetails.description || '',
+      avatar: userDetails.avatar || '',
+      age: userDetails.age || '',
+      gender: userDetails.gender || '保密',
+      // 将单个地址转换为数组格式
+      addresses: userDetails.address ? [userDetails.address] : []
+    }
+    
+    // 更新用户信息到store
+    userStore.updateProfile(completeUserData)
+    
+    // 更新表单数据
+    initFormWithUserData(completeUserData)
+  } catch (error) {
+    console.error('获取用户信息失败:', error)
+    // 使用已有的用户信息初始化表单
+    initFormWithUserData()
+  } finally {
+    loadingUserInfo.value = false
+  }
+}
+
+// 使用已有的用户信息初始化表单
+const initFormWithUserData = (userData = null) => {
+  const data = userData || user.value || {}
+  
+  profileForm.username = data.username || ''
+  profileForm.nickname = data.nickname || ''
+  profileForm.email = data.email || ''
+  profileForm.phone = data.phone || ''
+  profileForm.addresses = Array.isArray(data.addresses) ? [...data.addresses] : []
+  profileForm.avatar = data.avatar || ''
+  profileForm.gender = data.gender || '保密'
+  profileForm.age = data.age || ''
+  profileForm.description = data.description || ''
+  
+  avatarUrl.value = data.avatar || ''
+}
+
+// 组件挂载时获取用户信息
+onMounted(() => {
+  fetchUserInfo()
+})
+
+// 性别选项
+const genderOptions = [
+  { label: '男', value: '男' },
+  { label: '女', value: '女' },
+  { label: '保密', value: '保密' }
+]
+
 // 表单数据
 const profileForm = reactive({
-  username: user.value?.username || '',
-  email: user.value?.email || '',
-  phone: user.value?.phone || '',
-  address: user.value?.address || '',
-  avatar: user.value?.avatar || ''
+  username: '',
+  nickname: '', // 新增昵称字段
+  email: '',
+  phone: '',
+  addresses: [], // 改为数组，支持多个地址
+  avatar: '',
+  gender: '保密', // 新增性别字段，默认为保密
+  age: '', // 新增年龄字段
+  description: '' // 新增用户描述字段
 })
+
+// 新增地址
+const newAddress = ref('')
+
+// 添加新地址
+const addAddress = () => {
+  if (newAddress.value.trim()) {
+    profileForm.addresses.push(newAddress.value.trim())
+    newAddress.value = ''
+  }
+}
+
+// 删除地址
+const removeAddress = (index) => {
+  profileForm.addresses.splice(index, 1)
+}
 
 // 表单验证规则
 const rules = {
-  username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 3, max: 20, message: '用户名长度应为3-20个字符', trigger: 'blur' }
+  nickname: [
+    { max: 20, message: '昵称长度不应超过20个字符', trigger: 'blur' }
   ],
   email: [
-    { required: true, message: '请输入邮箱地址', trigger: 'blur' },
     { type: 'email', message: '请输入正确的邮箱地址', trigger: 'blur' }
   ],
   phone: [
     { pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号码', trigger: 'blur' }
+  ],
+  age: [
+    { pattern: /^(?:[1-9]\d?|1[0-4]\d|150)$/, message: '请输入1-150之间的有效年龄', trigger: 'blur' }
+  ],
+  description: [
+    { max: 500, message: '描述长度不应超过500个字符', trigger: 'blur' }
   ]
 }
 
@@ -47,24 +148,48 @@ const updateProfile = () => {
       loading.value = true
       
       try {
-        // 调用后端API: PATCH /api/user/profile
-        // 参数:
-        //   - username: 用户名
-        //   - email: 邮箱
-        //   - phone: 手机号
-        //   - address: 地址
-        //   - avatar: 头像URL
-        // 返回值: 更新后的完整User对象
-        await new Promise(resolve => setTimeout(resolve, 800))
+        // 构建符合后端API格式的请求数据
+        const requestData = {
+          nickname: profileForm.nickname,
+          email: profileForm.email,
+          phone: profileForm.phone,
+          // 将用户详细信息放入details对象中
+          details: {
+            description: profileForm.description,
+            avatar: profileForm.avatar,
+            gender: profileForm.gender,
+            age: profileForm.age,
+            // 如果有多个地址，只使用第一个地址
+            address: profileForm.addresses.length > 0 ? profileForm.addresses[0] : ''
+          }
+        }
         
-        // 更新用户信息
-        userStore.updateProfile({
-          ...profileForm
-        })
+        // 调用后端API: PUT /api/users/profile
+        const response = await api.put('/user/profile', requestData)
+        
+        // 处理后端返回的嵌套数据结构
+        const userData = response.data.data
+        const userDetails = userData.details || {}
+        
+        // 构建完整的用户信息对象
+        const completeUserData = {
+          username: userData.username,
+          nickname: userData.nickname,
+          email: userData.email,
+          phone: userData.phone,
+          description: userDetails.description || '',
+          avatar: userDetails.avatar || '',
+          age: userDetails.age || '',
+          gender: userDetails.gender || '保密',
+          addresses: userDetails.address ? [userDetails.address] : []
+        }
+        
+        // 更新用户信息到本地存储
+        userStore.updateProfile(completeUserData)
         
         ElMessage.success('个人信息更新成功')
       } catch (error) {
-        ElMessage.error('更新失败，请稍后再试')
+        ElMessage.error(error.message || '更新失败，请稍后再试')
         console.error('更新失败:', error)
       } finally {
         loading.value = false
@@ -76,25 +201,79 @@ const updateProfile = () => {
 }
 
 // 头像上传相关
-const avatarUrl = ref(user.value?.avatar || '')
+const avatarUrl = ref('')
 
-const handleAvatarSuccess = (response, uploadFile) => {
-  // 模拟上传成功后获取URL
-  avatarUrl.value = URL.createObjectURL(uploadFile.raw)
-  profileForm.avatar = avatarUrl.value
-  ElMessage.success('头像上传成功')
+// 头像上传状态
+const avatarUploading = ref(false)
+
+// 上传头像到服务器
+const uploadAvatar = async (file) => {
+  try {
+    // 创建FormData对象用于文件上传
+    const formData = new FormData()
+    formData.append('file', file)
+    
+    // 调用后端API上传头像
+    const response = await api.post('/user/avatar', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    })
+    
+    // 从响应中获取头像URL
+    const avatarUrl = response.data.data.url
+    return avatarUrl
+  } catch (error) {
+    console.error('头像上传失败:', error)
+    throw error
+  }
+}
+
+// 头像上传成功处理
+const handleAvatarSuccess = async (response, uploadFile) => {
+  try {
+    avatarUploading.value = true
+    
+    // 上传头像到服务器
+    const newAvatarUrl = await uploadAvatar(uploadFile.raw)
+    
+    // 更新头像URL
+    avatarUrl.value = newAvatarUrl
+    profileForm.avatar = newAvatarUrl
+    
+    // 更新用户信息
+    const updatedUserData = {
+      ...user.value,
+      details: {
+        ...user.value.details,
+        avatar: newAvatarUrl
+      }
+    }
+    userStore.updateProfile(updatedUserData)
+    
+    ElMessage.success('头像上传成功')
+  } catch (error) {
+    // 上传失败时使用本地预览
+    avatarUrl.value = URL.createObjectURL(uploadFile.raw)
+    profileForm.avatar = avatarUrl.value
+    
+    ElMessage.warning('头像已预览，但上传到服务器失败')
+    console.error('头像上传失败:', error)
+  } finally {
+    avatarUploading.value = false
+  }
 }
 
 const beforeAvatarUpload = (file) => {
   const isJPG = file.type === 'image/jpeg'
   const isPNG = file.type === 'image/png'
-  const isLt2M = file.size / 1024 / 1024 < 2
+  const isLt10M = file.size / 1024 / 1024 < 10
 
   if (!isJPG && !isPNG) {
     ElMessage.error('头像只能是JPG或PNG格式!')
   }
-  if (!isLt2M) {
-    ElMessage.error('头像大小不能超过2MB!')
+  if (!isLt10M) {
+    ElMessage.error('头像大小不能超过10MB!')
   }
   return (isJPG || isPNG) && isLt2M
 }
@@ -156,8 +335,15 @@ const updatePassword = () => {
       passwordLoading.value = true
       
       try {
-        // 模拟更新请求
-        await new Promise(resolve => setTimeout(resolve, 800))
+        // 调用后端API: PUT /api/users/password
+        //   - currentPassword: 当前密码
+        //   - newPassword: 新密码
+        // 返回值: { code: 200, message: string }
+        // 主要处理逻辑: 后端Java验证当前密码，加密新密码并更新到MySQL数据库
+        await api.put('/users/password', {
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword
+        })
         
         // 重置表单
         passwordForm.currentPassword = ''
@@ -166,7 +352,12 @@ const updatePassword = () => {
         
         ElMessage.success('密码更新成功')
       } catch (error) {
-        ElMessage.error('更新失败，请稍后再试')
+        // 处理特定错误，如密码不正确
+        if (error.response && error.response.status === 400) {
+          ElMessage.error('当前密码不正确')
+        } else {
+          ElMessage.error(error.message || '更新失败，请稍后再试')
+        }
         console.error('更新失败:', error)
       } finally {
         passwordLoading.value = false
@@ -192,32 +383,149 @@ const activeTab = ref('profile')
         <!-- 个人信息标签 -->
         <el-tab-pane label="个人信息" name="profile">
           <div class="profile-card">
-            <div class="avatar-section">
-              <el-upload
-                class="avatar-uploader"
-                action="#"
-                :show-file-list="false"
-                :on-success="handleAvatarSuccess"
-                :before-upload="beforeAvatarUpload"
-                :auto-upload="false"
-              >
-                <img v-if="avatarUrl" :src="avatarUrl" class="avatar" />
-                <el-icon v-else class="avatar-uploader-icon"><Plus /></el-icon>
-              </el-upload>
-              <div class="avatar-hint">点击上传头像</div>
-            </div>
-            
+            <!-- 加载状态 -->
+            <el-skeleton :loading="loadingUserInfo" animated>
+              <template #template>
+                <div class="user-info-summary">
+                  <div class="avatar-section">
+                    <el-skeleton-item variant="circle" style="width: 140px; height: 140px" />
+                  </div>
+                  <div class="user-info-details">
+                    <el-skeleton-item variant="p" style="width: 100%; height: 50px" />
+                    <el-skeleton-item variant="p" style="width: 100%; height: 50px" />
+                    <el-skeleton-item variant="p" style="width: 100%; height: 50px" />
+                    <el-skeleton-item variant="p" style="width: 100%; height: 50px" />
+                    <el-skeleton-item variant="p" style="width: 100%; height: 50px" />
+                    <el-skeleton-item variant="p" style="width: 100%; height: 50px" />
+                  </div>
+                </div>
+              </template>
+              
+              <!-- 用户信息展示栏 -->
+              <template #default>
+                <div class="user-info-summary">
+                  <div class="avatar-section">
+                    <el-upload
+                      class="avatar-uploader"
+                      action="#"
+                      :show-file-list="false"
+                      :on-success="handleAvatarSuccess"
+                      :before-upload="beforeAvatarUpload"
+                      :auto-upload="false"
+                    >
+                      <img v-if="avatarUrl" :src="avatarUrl" class="avatar" />
+                      <el-icon v-else class="avatar-uploader-icon"><Plus /></el-icon>
+                    </el-upload>
+                    <div class="avatar-hint">点击上传头像</div>
+                  </div>
+                  
+                  <div class="user-info-details">
+                    <div class="user-info-item">
+                      <span class="info-label">用户名:</span>
+                      <span class="info-value">{{ user?.username || '未设置' }}</span>
+                    </div>
+                    <div class="user-info-item">
+                      <span class="info-label">昵称:</span>
+                      <span class="info-value">{{ user?.nickname || '未设置' }}</span>
+                    </div>
+                    <div class="user-info-item">
+                      <span class="info-label">性别:</span>
+                      <span class="info-value">{{ user?.gender || '保密' }}</span>
+                    </div>
+                    <div class="user-info-item">
+                      <span class="info-label">年龄:</span>
+                      <span class="info-value">{{ user?.age ? `${user.age}岁` : '未设置' }}</span>
+                    </div>
+                    <div class="user-info-item">
+                      <span class="info-label">邮箱:</span>
+                      <span class="info-value">{{ user?.email || '未设置' }}</span>
+                    </div>
+                    <div class="user-info-item">
+                      <span class="info-label">手机:</span>
+                      <span class="info-value">{{ user?.phone || '未设置' }}</span>
+                    </div>
+                    <div class="user-info-item" v-if="user?.description">
+                      <span class="info-label">个人描述:</span>
+                      <span class="info-value">{{ user.description }}</span>
+                    </div>
+                    <div class="user-info-item" v-else>
+                      <span class="info-label">个人描述:</span>
+                      <span class="info-value">暂无描述</span>
+                    </div>
+                    <div class="user-info-item" v-if="user?.addresses && user.addresses.length > 0">
+                      <span class="info-label">收货地址:</span>
+                      <div class="info-value addresses-list">
+                        <div v-for="(address, index) in user.addresses" :key="index" class="address-item-display">
+                          {{ index + 1 }}. {{ address }}
+                        </div>
+                      </div>
+                    </div>
+                    <div class="user-info-item" v-else>
+                      <span class="info-label">收货地址:</span>
+                      <span class="info-value">暂无收货地址</span>
+                    </div>
+                  </div>
+                  
+                  <div class="edit-profile-button">
+                    <el-button type="primary" size="large" @click="activeTab = 'edit-profile'">
+                      修改资料
+                    </el-button>
+                  </div>
+                </div>
+              </template>
+            </el-skeleton>
+          </div>
+        </el-tab-pane>
+        
+        <!-- 编辑个人信息标签 -->
+        <el-tab-pane label="编辑资料" name="edit-profile">
+          <div class="profile-card">
             <div class="form-section">
               <el-form
                 ref="profileFormRef"
                 :model="profileForm"
                 :rules="rules"
-                label-position="top"
+                label-position="left"
+                label-width="100px"
+                size="large"
               >
-                <el-form-item prop="username" label="用户名">
+                <el-form-item prop="nickname" label="昵称">
                   <el-input 
-                    v-model="profileForm.username"
-                    placeholder="请输入用户名"
+                    v-model="profileForm.nickname"
+                    placeholder="请输入昵称"
+                  />
+                </el-form-item>
+                
+                <el-form-item prop="gender" label="性别">
+                  <el-radio-group v-model="profileForm.gender">
+                    <el-radio 
+                      v-for="option in genderOptions" 
+                      :key="option.value" 
+                      :label="option.value"
+                    >
+                      {{ option.label }}
+                    </el-radio>
+                  </el-radio-group>
+                </el-form-item>
+                
+                <el-form-item prop="age" label="年龄">
+                  <el-input 
+                    v-model="profileForm.age"
+                    placeholder="请输入年龄"
+                    type="number"
+                    min="1"
+                    max="150"
+                  />
+                </el-form-item>
+                
+                <el-form-item prop="description" label="个人描述">
+                  <el-input 
+                    v-model="profileForm.description"
+                    type="textarea"
+                    :rows="4"
+                    placeholder="请输入个人描述（最多500字）"
+                    maxlength="500"
+                    show-word-limit
                   />
                 </el-form-item>
                 
@@ -235,13 +543,43 @@ const activeTab = ref('profile')
                   />
                 </el-form-item>
                 
-                <el-form-item prop="address" label="收货地址">
-                  <el-input 
-                    v-model="profileForm.address"
-                    type="textarea"
-                    :rows="2"
-                    placeholder="请输入收货地址"
-                  />
+                <el-form-item label="收货地址">
+                  <div class="addresses-container">
+                    <div v-if="profileForm.addresses.length === 0" class="no-address">
+                      暂无收货地址
+                    </div>
+                    <div v-for="(address, index) in profileForm.addresses" :key="index" class="address-item">
+                      <el-input 
+                        v-model="profileForm.addresses[index]" 
+                        type="textarea" 
+                        :rows="2"
+                      />
+                      <el-button 
+                        type="danger" 
+                        circle 
+                        @click="removeAddress(index)"
+                        class="remove-address-btn"
+                      >
+                        <el-icon><Delete /></el-icon>
+                      </el-button>
+                    </div>
+                    
+                    <div class="add-address-form">
+                      <el-input 
+                        v-model="newAddress" 
+                        type="textarea" 
+                        :rows="2"
+                        placeholder="请输入新的收货地址"
+                      />
+                      <el-button 
+                        type="primary" 
+                        @click="addAddress"
+                        class="add-address-btn"
+                      >
+                        添加地址
+                      </el-button>
+                    </div>
+                  </div>
                 </el-form-item>
                 
                 <el-form-item>
@@ -268,7 +606,10 @@ const activeTab = ref('profile')
               ref="passwordFormRef"
               :model="passwordForm"
               :rules="passwordRules"
-              label-position="top"
+              label-position="left"
+              label-width="120px"
+              class="password-form"
+              size="large"
             >
               <el-form-item prop="currentPassword" label="当前密码">
                 <el-input 
@@ -332,7 +673,7 @@ const activeTab = ref('profile')
   margin-bottom: 24px;
   
   h1 {
-    font-size: 1.8rem;
+    font-size: 2rem;
     font-weight: 600;
     margin-bottom: 8px;
     color: #333;
@@ -351,19 +692,72 @@ const activeTab = ref('profile')
 }
 
 .profile-card {
-  padding: 20px;
+  padding: 30px;
+  position: relative;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+/* 用户信息展示栏样式 */
+.user-info-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 30px;
+  background-color: #f9f9f9;
+  border-radius: 10px;
+  margin-bottom: 30px;
+  max-width: 700px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.user-info-details {
+  width: 90%;
+  margin-top: 25px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.user-info-item {
+  display: flex;
+  align-items: center;
+  padding: 15px;
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.info-label {
+  font-weight: 500;
+  color: #666;
+  margin-right: 15px;
+  min-width: 70px;
+  font-size: 1.1rem;
+}
+
+.info-value {
+  color: #333;
+  flex: 1;
+  font-size: 1.1rem;
+}
+
+.edit-profile-button {
+  margin-top: 20px;
+  align-self: flex-end;
 }
 
 .avatar-section {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-bottom: 30px;
+  margin-bottom: 20px;
 }
 
 .avatar-uploader {
-  width: 120px;
-  height: 120px;
+  width: 140px;
+  height: 140px;
   border: 1px dashed #d9d9d9;
   border-radius: 50%;
   cursor: pointer;
@@ -377,11 +771,11 @@ const activeTab = ref('profile')
 }
 
 .avatar-uploader-icon {
-  font-size: 28px;
+  font-size: 32px;
   color: #8c939d;
-  width: 120px;
-  height: 120px;
-  line-height: 120px;
+  width: 140px;
+  height: 140px;
+  line-height: 140px;
   text-align: center;
 }
 
@@ -393,27 +787,35 @@ const activeTab = ref('profile')
 }
 
 .avatar-hint {
-  margin-top: 8px;
-  font-size: 0.9rem;
+  margin-top: 10px;
+  font-size: 1rem;
   color: #666;
 }
 
 .form-section {
-  max-width: 500px;
+  max-width: 650px;
   margin: 0 auto;
+  padding: 20px 0;
+}
+
+.password-form {
+  max-width: 550px;
+  margin: 0 auto;
+  padding: 20px 0;
 }
 
 .section-title {
-  font-size: 1.3rem;
+  font-size: 1.7rem;
   font-weight: 600;
-  margin-bottom: 20px;
+  margin-bottom: 30px;
   color: #333;
+  text-align: center;
 }
 
 .update-button {
   width: 100%;
-  padding: 12px;
-  font-size: 1rem;
+  padding: 14px;
+  font-size: 1.1rem;
   background-color: #ff6b6b;
   border-color: #ff6b6b;
   
@@ -428,10 +830,75 @@ const activeTab = ref('profile')
   text-align: center;
 }
 
+/* 多地址样式 */
+.addresses-container {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  width: 100%;
+}
+
+.address-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+}
+
+.remove-address-btn {
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+
+.add-address-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.add-address-btn {
+  align-self: flex-end;
+}
+
+.no-address {
+  color: #999;
+  font-style: italic;
+  padding: 10px 0;
+}
+
+/* 表单元素样式 */
+:deep(.el-form-item__label) {
+  font-size: 1.1rem !important;
+  font-weight: 500;
+}
+
+:deep(.el-input__inner) {
+  font-size: 1.1rem !important;
+  padding: 12px !important;
+  height: auto !important;
+}
+
+:deep(.el-textarea__inner) {
+  font-size: 1.1rem !important;
+  padding: 12px !important;
+}
+
+:deep(.el-tabs__item) {
+  font-size: 1.1rem !important;
+  padding: 0 25px !important;
+  height: 50px !important;
+  line-height: 50px !important;
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
   .profile-card {
     padding: 20px 10px;
+  }
+  
+  .user-info-details {
+    grid-template-columns: 1fr;
   }
 }
 </style>
