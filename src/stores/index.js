@@ -160,10 +160,27 @@ export const useCartStore = defineStore('cart', {
       try {
         this.loading = true
         const response = await api.get('/cart/items')
-        this.items = response.data || []
+        console.log('购物车API响应:', response)
+        console.log('响应数据类型:', typeof response)
+        
+        // 处理不同的API响应格式
+        if (Array.isArray(response)) {
+          // 如果直接返回数组
+          this.items = response
+        } else if (response && response.data && Array.isArray(response.data)) {
+          // 如果返回{data: CartItem[]}格式
+          this.items = response.data
+        } else {
+          // 其他情况，设为空数组
+          this.items = []
+        }
+        
         this.totalCount = this.items.reduce((sum, item) => sum + item.quantity, 0)
+        console.log('购物车数据已设置:', this.items)
       } catch (error) {
         console.error('获取购物车失败:', error)
+        this.items = []
+        this.totalCount = 0
       } finally {
         this.loading = false
       }
@@ -298,86 +315,12 @@ export const useOrderStore = defineStore('order', {
   }
 })
 
-// 商品状态管理（保留用于首页展示的示例）
+// 商品状态管理（完全依赖API数据）
 export const useProductStore = defineStore('product', {
   state: () => ({
-    // 本地商品数据（作为API调用失败时的备用数据）
-    products: [
-      {
-        id: 1,
-        name: '红富士苹果',
-        price: 12.9,
-        image: '/images/apple.jpg',
-        description: '新鲜采摘的红富士苹果，口感脆甜，富含维生素。',
-        category: '苹果',
-        stock: 100,
-        rating: 4.8,
-        reviews: [
-          { id: 1, userId: 1, username: '张三', rating: 5, comment: '非常新鲜，很甜！', date: '2023-05-15' },
-          { id: 2, userId: 2, username: '李四', rating: 4, comment: '包装很好，水果新鲜。', date: '2023-05-16' }
-        ]
-      },
-      {
-        id: 2,
-        name: '海南香蕉',
-        price: 8.5,
-        image: '/images/banana.jpg',
-        description: '海南特产香蕉，香甜软糯，营养丰富。',
-        category: '香蕉',
-        stock: 150,
-        rating: 4.6,
-        reviews: [
-          { id: 3, userId: 3, username: '王五', rating: 5, comment: '香蕉很新鲜，很好吃！', date: '2023-05-14' }
-        ]
-      },
-      {
-        id: 3,
-        name: '泰国山竹',
-        price: 35.8,
-        image: '/images/mangosteen.jpg',
-        description: '泰国进口山竹，果肉洁白细嫩，甜中带酸。',
-        category: '热带水果',
-        stock: 50,
-        rating: 4.9,
-        reviews: [
-          { id: 4, userId: 1, username: '张三', rating: 5, comment: '山竹很新鲜，个大肉多！', date: '2023-05-13' }
-        ]
-      },
-      {
-        id: 4,
-        name: '智利车厘子',
-        price: 89.9,
-        image: '/images/cherry.jpg',
-        description: '智利进口车厘子，果实饱满，口感甜脆。',
-        category: '浆果',
-        stock: 30,
-        rating: 4.7,
-        reviews: []
-      },
-      {
-        id: 5,
-        name: '新疆哈密瓜',
-        price: 29.9,
-        image: '/images/hami-melon.jpg',
-        description: '新疆特产哈密瓜，香甜可口，肉质细腻。',
-        category: '瓜类',
-        stock: 40,
-        rating: 4.8,
-        reviews: []
-      },
-      {
-        id: 6,
-        name: '泰国椰青',
-        price: 15.9,
-        image: '/images/coconut.jpg',
-        description: '泰国进口椰青，椰汁清甜，椰肉爽滑。',
-        category: '热带水果',
-        stock: 60,
-        rating: 4.5,
-        reviews: []
-      }
-    ],
-    categories: ['苹果', '香蕉', '热带水果', '浆果', '瓜类']
+    // 移除本地商品数据，完全依赖API
+    products: [],
+    categories: []
   }),
   getters: {
     getProductById: (state) => (id) => {

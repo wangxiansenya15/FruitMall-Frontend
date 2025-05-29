@@ -102,23 +102,28 @@ const getUserList = async () => {
       }
     })
     
-    // 使用后端返回的数据 - Result<T>格式: {code, message, data}
+    // 由于api.js响应拦截器已经处理了响应格式，直接获取data层数据
     // data为PageInfo<User>格式: {list, total, ...}
-    console.log('API响应数据:', response.data) // 调试日志
+    console.log('API响应数据:', response) // 调试日志
     
-    // 检查响应状态码
-    if (response.data.code === 200) {
-      // 从Result.data中获取PageInfo对象
-      const pageInfo = response.data.data
-      // 从PageInfo中获取用户列表和总数
-      tableData.value = pageInfo?.list || []
-      total.value = pageInfo?.total || 0
-      console.log('处理后表格数据:', tableData.value) // 调试日志
-    } else {
-      // 处理业务逻辑错误
-      ElMessage.error(response.data.message || '获取用户列表失败')
-      tableData.value = []
-      total.value = 0
+    // 验证响应数据格式
+    if (!response || typeof response !== 'object') {
+      throw new Error('服务器响应数据格式错误')
+    }
+    
+    // 从PageInfo中获取用户列表和总数
+    tableData.value = response?.list || []
+    total.value = response?.total || 0
+    console.log('处理后表格数据:', tableData.value) // 调试日志
+    
+    // 检查用户数据中的时间字段
+    if (tableData.value.length > 0) {
+      console.log('第一个用户的时间字段:', {
+        registerTime: tableData.value[0].registerTime,
+        updateTime: tableData.value[0].updateTime,
+        lastModifiedDate: tableData.value[0].lastModifiedDate,
+        lastUpdateTime: tableData.value[0].lastUpdateTime
+      })
     }
   } catch (error) {
     console.error('获取用户列表失败', error)
@@ -174,19 +179,17 @@ const handleEdit = async (row) => {
   
   try {
     // 调用后端API获取用户详情
-    const response = await api.get(`/admin/users/${row.id}`)
+    // 由于api.js响应拦截器已经处理了响应格式，直接获取data层数据
+    const userData = await api.get(`/admin/users/${row.id}`)
     
-    // 检查响应状态码
-    if (response.data.code === 200) {
-      // 从Result.data中获取用户数据
-      const userData = response.data.data
-      // 填充表单数据
-      Object.assign(formData, { ...userData, password: '' })
-      dialogVisible.value = true
-    } else {
-      // 处理业务逻辑错误
-      ElMessage.error(response.data.message || '获取用户详情失败')
+    // 验证响应数据格式
+    if (!userData || typeof userData !== 'object') {
+      throw new Error('服务器响应数据格式错误')
     }
+    
+    // 填充表单数据
+    Object.assign(formData, { ...userData, password: '' })
+    dialogVisible.value = true
   } catch (error) {
     console.error('获取用户详情失败', error)
     ElMessage.error('获取用户详情失败：' + (error.message || '未知错误'))
@@ -208,25 +211,21 @@ const submitForm = async () => {
         
         if (formData.id) {
           // 更新用户基本信息
-          response = await api.put(`/admin/users/${formData.id}`, userData)
+          // 由于api.js响应拦截器已经处理了响应格式，直接获取data层数据
+          await api.put(`/admin/users/${formData.id}`, userData)
         } else {
           // 创建用户
-          response = await api.post('/admin/users', userData)
+          await api.post('/admin/users', userData)
         }
         
-        // 检查响应状态码
-        if (response.data.code === 200) {
-          // 如果是编辑用户且状态发生变化，则调用状态更新接口
-          if (formData.id && formData.status) {
-            await handleStatusChange({ id: formData.id, status: formData.status })
-          }
-          ElMessage.success(response.data.message || (formData.id ? '更新用户成功' : '创建用户成功'))
-          dialogVisible.value = false
-          getUserList()
-        } else {
-          // 处理业务逻辑错误
-          ElMessage.error(response.data.message || '保存用户失败')
+        // 如果是编辑用户且状态发生变化，则调用状态更新接口
+        if (formData.id && formData.status) {
+          await handleStatusChange({ id: formData.id, status: formData.status })
         }
+        
+        ElMessage.success(formData.id ? '更新用户成功' : '创建用户成功')
+        dialogVisible.value = false
+        getUserList()
       } catch (error) {
         console.error('保存用户失败', error)
         ElMessage.error('保存用户失败：' + (error.message || '未知错误'))
@@ -254,17 +253,11 @@ const handleStatusChange = async (row) => {
       status: row.status
     }
 
-    const response = await api.patch(`/admin/users/${row.id}/status`, statusData)
-
-    // 检查响应状态码
-    if (response.data.code === 200) {
-      ElMessage.success(response.data.message || '更新用户状态成功')
-      getUserList() // 成功时刷新数据，确保前后端一致
-    } else {
-      // 处理业务逻辑错误
-      ElMessage.error(response.data.message || '更新用户状态失败')
-      getUserList() // 刷新数据，恢复原状态
-    }
+    // 由于api.js响应拦截器已经处理了响应格式，直接调用API
+    await api.patch(`/admin/users/${row.id}/status`, statusData)
+    
+    ElMessage.success('更新用户状态成功')
+    getUserList() // 成功时刷新数据，确保前后端一致
   } catch (error) {
     console.error('更新用户状态失败', error)
     ElMessage.error('更新用户状态失败：' + (error.message || '未知错误'))
@@ -302,16 +295,11 @@ const handleDelete = (row) => {
   ).then(async () => {
     try {
       // 调用后端API删除用户
-      const response = await api.delete(`/admin/users/${row.id}`)
+      // 由于api.js响应拦截器已经处理了响应格式，直接调用API
+      await api.delete(`/admin/users/${row.id}`)
       
-      // 检查响应状态码
-      if (response.data.code === 200) {
-        ElMessage.success(response.data.message || '删除用户成功')
-        getUserList()
-      } else {
-        // 处理业务逻辑错误
-        ElMessage.error(response.data.message || '删除用户失败')
-      }
+      ElMessage.success('删除用户成功')
+      getUserList()
     } catch (error) {
       console.error('删除用户失败', error)
       ElMessage.error('删除用户失败：' + (error.message || '未知错误'))
@@ -323,16 +311,30 @@ const handleDelete = (row) => {
 
 // 格式化日期
 const formatDate = (dateString) => {
-  if (!dateString) return ''
-  const date = new Date(dateString)
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  })
+  // 处理null、undefined、空字符串等情况
+  if (!dateString || dateString === 'null' || dateString === 'undefined') {
+    return '暂无数据' // 使用短横线代替"暂无数据"，更简洁美观
+  }
+  
+  try {
+    const date = new Date(dateString)
+    // 检查日期是否有效
+    if (isNaN(date.getTime())) {
+      return '-'
+    }
+    
+    return date.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    })
+  } catch (error) {
+    console.error('日期格式化失败:', error)
+    return '-'
+  }
 }
 
 // 获取状态标签类型

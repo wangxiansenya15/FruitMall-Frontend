@@ -49,18 +49,18 @@ const handleLogin = () => {
       
       try {
         // 调用后端API: POST /api/auth/login
-        const response = await api.post('/auth/login', {
+        // 由于api.js响应拦截器已经处理了响应格式，直接获取data层数据
+        const data = await api.post('/auth/login', {
           username: loginForm.username,
           password: loginForm.password
         });
         
-        // 从响应数据中获取token和用户信息
-        const { data: responseData } = response;
-        if (!responseData || !responseData.data) {
+        // 验证响应数据格式
+        if (!data || typeof data !== 'object') {
           throw new Error('服务器响应数据格式错误');
         }
         
-        const { data } = responseData;
+        // 获取token
         const token = data.token;
         if (!token) {
           throw new Error('无法获取认证令牌');

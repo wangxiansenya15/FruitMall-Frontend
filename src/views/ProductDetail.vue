@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useProductStore, useCartStore, useUserStore } from '../stores'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import api from '../services/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -13,18 +14,55 @@ const userStore = useUserStore()
 // 获取商品ID
 const productId = computed(() => parseInt(route.params.id))
 
-// 获取商品详情
-// 调用后端API: GET /api/products/{id}
-// 参数: productId - 商品ID
-// 返回值: Product对象 - 包含商品详情信息
-const product = computed(() => productStore.getProductById(productId.value))
+// 商品详情数据
+const product = ref(null)
+const loading = ref(false)
+const error = ref('')
 
-// 如果商品不存在，重定向到首页
-onMounted(() => {
-  if (!product.value) {
-    ElMessage.error('商品不存在')
-    router.push('/')
+// 获取商品详情
+const fetchProductDetail = async () => {
+  try {
+    loading.value = true
+    error.value = ''
+    
+    console.log('正在获取商品详情:', productId.value)
+    const response = await api.get(`/products/${productId.value}`)
+    console.log('商品详情响应:', response)
+    console.log('响应数据类型:', typeof response)
+    console.log('响应数据结构:', Object.keys(response || {}))
+    
+    // 直接使用API返回的数据，不进行额外处理
+    if (response) {
+      product.value = response
+      console.log('商品数据已设置:', product.value)
+      console.log('库存值:', product.value.stock)
+      console.log('描述值:', product.value.description)
+    } else {
+      throw new Error('商品不存在')
+    }
+  } catch (err) {
+    console.error('获取商品详情失败:', err)
+    error.value = '获取商品详情失败'
+    
+    // 如果API调用失败，尝试从store获取
+    const storeProduct = productStore.getProductById(productId.value)
+    if (storeProduct) {
+      product.value = storeProduct
+      console.log('使用store中的商品数据:', product.value)
+    } else {
+      ElMessage.error('商品不存在')
+      router.push('/')
+    }
+  } finally {
+    loading.value = false
   }
+}
+
+// 组件挂载时获取商品详情
+onMounted(() => {
+  fetchProductDetail()
+  // 确保页面滚动到顶部，避免从首页点击进入时停留在页面底部
+  window.scrollTo({ top: 0, behavior: 'smooth' })
 })
 
 // 购买数量
@@ -89,7 +127,7 @@ const commentForm = ref({
 const isSubmitting = ref(false)
 
 // 提交评论
-const submitReview = () => {
+const submitReview = async () => {
   if (!userStore.isAuthenticated) {
     router.push(`/login?redirect=/product/${productId.value}`)
     return
@@ -100,27 +138,34 @@ const submitReview = () => {
     return
   }
   
-  isSubmitting.value = true
-  
-  // 模拟提交评论
-  setTimeout(() => {
-    const review = {
-      userId: userStore.user.id,
-      username: userStore.user.username,
+  try {
+    isSubmitting.value = true
+    
+    // 调用后端API提交评论
+    const reviewData = {
       rating: commentForm.value.rating,
-      comment: commentForm.value.comment,
+      comment: commentForm.value.comment
     }
     
-    productStore.addReview(productId.value, review)
+    console.log('提交评论:', reviewData)
+    const response = await api.post(`/products/${productId.value}/reviews`, reviewData)
+    console.log('评论提交响应:', response)
     
     // 重置表单
     commentForm.value.rating = 5
     commentForm.value.comment = ''
     
-    isSubmitting.value = false
-    
     ElMessage.success('评论提交成功')
-  }, 500)
+    
+    // 重新获取商品详情以更新评论列表
+    await fetchProductDetail()
+    
+  } catch (error) {
+    console.error('提交评论失败:', error)
+    ElMessage.error('提交评论失败，请稍后重试')
+  } finally {
+    isSubmitting.value = false
+  }
 }
 
 // 格式化日期
@@ -131,77 +176,118 @@ const formatDate = (dateString) => {
 </script>
 
 <template>
-  <div v-if="product" class="product-detail-container">
-    <!-- 商品详情 -->
-    <div class="product-detail-content">
+  <div class="product-detail-container">
+    <!-- 返回首页按钮 -->
+    <div class="back-to-home">
+      <el-button type="primary" plain @click="() => router.push('/')">
+        <el-icon><ArrowLeft /></el-icon>
+        返回首页
+      </el-button>
+    </div>
+    
+    <!-- 加载状态 -->
+    <div v-if="loading" class="loading-container">
+      <el-skeleton :rows="5" animated />
+      <div class="loading-text">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        正在加载商品详情...
+      </div>
+    </div>
+    
+    <!-- 错误状态 -->
+    <div v-else-if="error" class="error-container">
+      <el-alert
+        :title="error"
+        type="error"
+        show-icon
+        :closable="false"
+      >
+        <template #default>
+          <p>{{ error }}</p>
+          <el-button type="primary" size="small" @click="fetchProductDetail" style="margin-top: 10px;">
+            重新加载
+          </el-button>
+        </template>
+      </el-alert>
+    </div>
+    
+    <!-- 商品详情内容 -->
+    <div v-else-if="product" class="product-detail-content-wrapper">
+      <!-- 商品详情 -->
+      <div class="product-detail-content">
       <div class="product-gallery">
         <div class="main-image">
-          <img :src="product.image || 'https://picsum.photos/id/' + (product.id + 100) + '/600/400'" :alt="product.name">
+          <img :src="product.imageUrl || 'https://picsum.photos/id/' + (product.id + 100) + '/600/400'" :alt="product.name">
         </div>
       </div>
       
       <div class="product-info">
-        <h1 class="product-name">{{ product.name }}</h1>
-        
-        <div class="product-rating">
-          <el-rate 
-            v-model="product.rating" 
-            disabled 
-            text-color="#ff9900"
-            score-template="{value}"
-            :show-score="true"
-            :colors="['#ff9900', '#ff9900', '#ff9900']"
-          ></el-rate>
-          <span class="review-count">{{ product.reviews.length }} 条评价</span>
-        </div>
-        
-        <div class="product-price">
-          <span class="price">¥{{ product.price.toFixed(2) }}</span>
-        </div>
-        
-        <div class="product-description">
-          <p>{{ product.description }}</p>
-        </div>
-        
-        <div class="product-meta">
-          <div class="meta-item">
-            <span class="label">分类:</span>
-            <span class="value">{{ product.category }}</span>
+          <h1 class="product-name">{{ product.name }}</h1>
+          
+          <div class="product-rating">
+            <el-rate 
+              :model-value="product.rating || 0" 
+              disabled 
+              text-color="#ff9900"
+              score-template="{value}"
+              :show-score="true"
+              :colors="['#ff9900', '#ff9900', '#ff9900']"
+            ></el-rate>
+            <span class="review-count">{{ (product.reviews || []).length }} 条评价</span>
           </div>
-          <div class="meta-item">
-            <span class="label">库存:</span>
-            <span class="value">{{ product.stock }} 件</span>
+          
+          <div class="product-price">
+            <span class="price">¥{{ (product.price || 0).toFixed(2) }}</span>
           </div>
-        </div>
-        
-        <div class="quantity-control">
-          <span class="label">数量:</span>
-          <div class="quantity-buttons">
-            <el-button 
-              :icon="Minus" 
-              circle 
-              :disabled="quantity <= 1"
-              @click="decreaseQuantity"
-            >
-              <el-icon><Minus /></el-icon>
-            </el-button>
-            <span class="quantity">{{ quantity }}</span>
-            <el-button 
-              :icon="Plus" 
-              circle 
-              :disabled="quantity >= product.stock"
-              @click="increaseQuantity"
-            >
-              <el-icon><Plus /></el-icon>
-            </el-button>
+          
+          <div class="product-description">
+            <p>{{ product.description }}</p>
           </div>
-        </div>
+          
+          <div class="product-meta">
+            <div class="meta-item">
+              <span class="label">分类:</span>
+              <span class="value">{{ product.category }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="label">库存:</span>
+              <span class="value">{{ product.stock }} 件</span>
+            </div>
+          </div>
+          
+          <div class="quantity-control">
+            <span class="label">数量:</span>
+            <div class="quantity-buttons">
+              <el-button 
+                size="small"
+                :disabled="quantity <= 1"
+                @click="decreaseQuantity"
+              >
+                <el-icon><Minus /></el-icon>
+              </el-button>
+              <el-input-number 
+                v-model="quantity" 
+                :min="1" 
+                :max="product?.stock || 999"
+                controls-position=""
+                class="quantity-input"
+              />
+              <el-button 
+                size="small"
+                :disabled="!product || quantity >= product.stock"
+                @click="increaseQuantity"
+              >
+                <el-icon><Plus /></el-icon>
+              </el-button>
+            </div>
+          </div>
         
         <div class="product-actions">
           <el-button 
             type="primary" 
             class="buy-button" 
-            :disabled="product.stock <= 0"
+            size="large"
+            :disabled="!product || product.stock <= 0"
             @click="buyNow"
           >
             立即购买
@@ -210,7 +296,8 @@ const formatDate = (dateString) => {
           <el-button 
             type="default" 
             class="cart-button" 
-            :disabled="product.stock <= 0"
+            size="large"
+            :disabled="!product || product.stock <= 0"
             @click="addToCart"
           >
             <el-icon><ShoppingCart /></el-icon>
@@ -225,8 +312,8 @@ const formatDate = (dateString) => {
       <h2 class="section-title">商品评价</h2>
       
       <!-- 评论列表 -->
-      <div v-if="product.reviews.length > 0" class="reviews-list">
-        <div v-for="review in product.reviews" :key="review.id" class="review-item">
+      <div v-if="(product.reviews || []).length > 0" class="reviews-list">
+        <div v-for="review in (product.reviews || [])" :key="review.id" class="review-item">
           <div class="review-header">
             <div class="reviewer-info">
               <el-avatar :size="40" icon="UserFilled"></el-avatar>
@@ -285,6 +372,14 @@ const formatDate = (dateString) => {
         </el-button>
       </div>
     </div>
+    </div>
+    
+    <!-- 无商品数据状态 -->
+    <div v-else class="empty-container">
+      <el-empty description="商品不存在">
+        <el-button type="primary" @click="() => router.push('/')">返回首页</el-button>
+      </el-empty>
+    </div>
   </div>
 </template>
 
@@ -293,6 +388,70 @@ const formatDate = (dateString) => {
 
 .product-detail-container {
   padding: 30px 20px;
+}
+
+/* 返回首页按钮样式 */
+.back-to-home {
+  margin-bottom: 20px;
+  text-align: left; /* 左上显示按钮 */
+  
+  .el-button {
+    border-radius: 8px;
+    padding: 8px 16px;
+    
+    .el-icon {
+      margin-right: 4px;
+    }
+  }
+}
+
+/* 加载状态样式 */
+.loading-container {
+  text-align: center;
+  padding: 60px 20px;
+  
+  .loading-text {
+    margin-top: 20px;
+    font-size: 1.1rem;
+    color: #666;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    
+    .el-icon {
+      font-size: 1.2rem;
+      color: #409eff;
+    }
+  }
+}
+
+/* 错误状态样式 */
+.error-container {
+  margin: 40px 0;
+  
+  .el-alert {
+    border-radius: 12px;
+    padding: 20px;
+    
+    .el-button {
+      border-radius: 8px;
+    }
+  }
+}
+
+/* 空数据状态样式 */
+.empty-container {
+  margin: 60px 0;
+  
+  .el-empty {
+    padding: 40px 20px;
+    
+    .el-button {
+      border-radius: 8px;
+      padding: 10px 20px;
+    }
+  }
 }
 
 .product-detail-content {
@@ -382,48 +541,88 @@ const formatDate = (dateString) => {
   }
   
   .quantity-control {
-  display: flex;
-  align-items: center;
-  border: 1px solid #ddd;
-  border-radius: 10px;
-  overflow: hidden;
-  
-  button {
-    width: 44px;
-    height: 44px;
     display: flex;
     align-items: center;
-    justify-content: center;
-    background-color: #f5f7fa;
-    border: none;
-    cursor: pointer;
-    font-size: 1.2rem;
+    gap: 16px; /* 增加间距避免重叠 */
+    margin-bottom: 24px;
+    padding: 12px 0; /* 增加垂直内边距 */
     
-    &:hover {
-      background-color: #e4e7ed;
+    .label {
+      font-weight: 500;
+      color: #333;
+      min-width: 50px; /* 增加标签宽度 */
+      flex-shrink: 0; /* 防止标签被压缩 */
+    }
+    
+    .quantity-buttons {
+      display: flex;
+      align-items: center;
+      gap: 12px; /* 增加按钮间距 */
+      
+      .el-button {
+        width: 40px; /* 增加按钮宽度 */
+        height: 40px; /* 增加按钮高度 */
+        border-radius: 8px;
+        flex-shrink: 0; /* 防止按钮被压缩 */
+        
+        .el-icon {
+          font-size: 16px; /* 增加图标大小 */
+        }
+      }
+      
+      .quantity-input {
+        width: 100px; /* 增加输入框宽度 */
+        flex-shrink: 0; /* 防止输入框被压缩 */
+        
+        :deep(.el-input__inner) {
+          text-align: center;
+          font-weight: 500;
+          height: 40px; /* 确保与按钮高度一致 */
+        }
+        
+        :deep(.el-input-number__decrease),
+        :deep(.el-input-number__increase) {
+          display: none; /* 隐藏默认的增减按钮，使用自定义按钮 */
+        }
+      }
     }
   }
   
-  input {
-    width: 60px;
-    height: 44px;
-    border: none;
-    text-align: center;
-    font-size: 1.2rem;
-    font-weight: 500;
+  .product-actions {
+    margin-top: 30px;
+    display: flex;
+    gap: 16px;
     
-    &:focus {
-      outline: none;
+    .el-button {
+      flex: 1;
+      border-radius: 8px;
+      font-weight: 500;
+      
+      &.buy-button {
+        background-color: #ff6b6b;
+        border-color: #ff6b6b;
+        
+        &:hover {
+          background-color: color.adjust(#ff6b6b, $lightness: -5%);
+          border-color: color.adjust(#ff6b6b, $lightness: -5%);
+        }
+      }
+      
+      &.cart-button {
+        border-color: #ff6b6b;
+        color: #ff6b6b;
+        
+        &:hover {
+          background-color: #ff6b6b;
+          color: white;
+        }
+        
+        .el-icon {
+          margin-right: 4px;
+        }
+      }
     }
   }
-}
-  
-  .add-to-cart-section {
-  margin-top: 30px;
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
 
 .product-reviews {
   background-color: white;

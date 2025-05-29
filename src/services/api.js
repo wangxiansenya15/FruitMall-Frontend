@@ -17,16 +17,76 @@ api.interceptors.request.use(config => {
 })
 
 // 响应拦截器（统一错误处理）
-axios.interceptors.response.use(response => {
-  const { code, data } = response.data;
-  if (code !== 200) {
-    return Promise.reject(new Error(data?.message || '业务逻辑错误'));
+api.interceptors.response.use(response => {
+  // 检查响应数据结构
+  if (response.data && typeof response.data === 'object') {
+    const { code, data, message } = response.data;
+    
+    // 如果有业务状态码，检查是否成功
+    if (code !== undefined && code !== 200) {
+      const error = new Error(message || '业务逻辑错误');
+      error.code = code;
+      error.response = response;
+      return Promise.reject(error);
+    }
+    
+    // 对于成功的响应，返回data字段的值
+    // 但需要确保data是有意义的数据，如果data是简单值（如数字1）且不是预期的对象，则返回整个响应
+    if (data !== undefined) {
+      // 如果data是对象或数组，直接返回
+      if (typeof data === 'object' || Array.isArray(data)) {
+        return data;
+      }
+      // 如果data是简单值但看起来像是操作结果（如1表示成功），返回包含更多信息的对象
+      if (typeof data === 'number' || typeof data === 'boolean' || typeof data === 'string') {
+        return {
+          result: data,
+          message: message || '操作成功',
+          code: code
+        };
+      }
+      return data;
+    }
+    
+    // 如果没有data字段，返回整个response.data
+    return response.data;
   }
-  return data; // 直接返回data层
+  
+  // 如果没有标准的业务响应格式，直接返回response.data
+  return response.data;
 }, error => {
+  // HTTP错误处理
   if (error.response) {
-    console.error('请求错误', error.config.url, error.response.status);
+    const { status, data } = error.response;
+    console.error('HTTP请求错误:', error.config?.url, status);
+    
+    // 处理常见的HTTP错误状态码
+    switch (status) {
+      case 401:
+        // 未授权，可能需要重新登录
+        localStorage.removeItem('token');
+        break;
+      case 403:
+        // 禁止访问
+        break;
+      case 404:
+        // 资源不存在
+        break;
+      case 500:
+        // 服务器内部错误
+        break;
+    }
+    
+    // 如果响应体中有错误信息，使用它
+    if (data && data.message) {
+      error.message = data.message;
+    }
+  } else if (error.request) {
+    // 网络错误
+    console.error('网络请求失败:', error.message);
+    error.message = '网络连接失败，请检查网络设置';
   }
+  
   return Promise.reject(error);
 });
 

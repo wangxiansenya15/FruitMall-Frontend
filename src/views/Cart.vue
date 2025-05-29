@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useCartStore, useUserStore } from '../stores'
 import { ElMessageBox, ElMessage } from 'element-plus'
+import api from '../services/api' // 导入API服务用于后端交互
 
 const router = useRouter()
 const cartStore = useCartStore()
@@ -19,8 +20,56 @@ const totalItems = computed(() => cartStore.totalItems)
 const allSelected = ref(true)
 const selectedItems = ref([])
 
+// 从后端获取购物车数据
+// 调用后端API: GET /api/cart/items
+// 参数: 无
+// 返回值: CartItem数组 - 用户的购物车商品列表
+const fetchCartItems = async () => {
+  if (!userStore.isAuthenticated) {
+    return // 用户未登录时不获取购物车数据
+  }
+  
+  try {
+    console.log('正在获取购物车数据...')
+    // 直接使用cartStore的fetchCart方法，它会正确处理API响应
+    await cartStore.fetchCart()
+    console.log('购物车数据已更新:', cartStore.items)
+    
+    // 为每个购物车项补充完整的商品信息
+    for (let item of cartStore.items) {
+      if (!item.name || !item.price) {
+        try {
+          const productResponse = await api.get(`/products/${item.productId || item.id}`)
+          const product = productResponse.data || productResponse
+          
+          // 补充商品信息
+          item.name = item.name || product.name || '未知商品'
+          item.price = item.price || product.price || 0
+          item.image = item.image || product.imageUrl || product.image
+          item.description = item.description || product.description
+          
+          console.log('已补充商品信息:', item)
+        } catch (error) {
+          console.error('获取商品详情失败:', error)
+          // 设置默认值
+          item.name = item.name || '未知商品'
+          item.price = item.price || 0
+        }
+      }
+    }
+  } catch (error) {
+    console.error('获取购物车数据失败:', error)
+    // 如果获取失败，使用本地store的数据
+    console.log('使用本地购物车数据')
+  }
+}
+
 // 初始化选中所有商品
-onMounted(() => {
+onMounted(async () => {
+  // 先从后端获取购物车数据
+  await fetchCartItems()
+  
+  // 然后选中所有商品
   selectedItems.value = cartItems.value.map(item => item.id)
 })
 
@@ -46,9 +95,37 @@ const selectedTotalPrice = computed(() => {
 //   - id: 购物车项ID
 //   - quantity: 新数量
 // 返回值: CartItem对象 - 更新后的购物车项信息
-const updateQuantity = (item, quantity) => {
+const updateQuantity = async (item, quantity) => {
   if (quantity < 1) return
-  cartStore.updateQuantity(item.id, quantity)
+  
+  try {
+    // 调用后端API更新购物车项数量
+    const response = await api.put(`/cart/items/${item.id}`, {
+      quantity: quantity
+    })
+    
+    console.log('更新购物车数量响应:', response)
+    
+    // 直接更新本地购物车项的数量，避免重复调用store方法
+    const cartItem = cartStore.items.find(cartItem => cartItem.id === item.id)
+    if (cartItem) {
+      cartItem.quantity = quantity
+      // 重新计算总数量
+      cartStore.totalCount = cartStore.items.reduce((sum, item) => sum + item.quantity, 0)
+    }
+    
+    ElMessage.success('数量已更新')
+  } catch (error) {
+    console.error('更新购物车数量失败:', error)
+    ElMessage.error('更新数量失败，请稍后重试')
+    
+    // 如果API调用失败，仍然更新本地状态作为备用方案
+    const cartItem = cartStore.items.find(cartItem => cartItem.id === item.id)
+    if (cartItem) {
+      cartItem.quantity = quantity
+      cartStore.totalCount = cartStore.items.reduce((sum, item) => sum + item.quantity, 0)
+    }
+  }
 }
 
 // 从购物车移除商品
@@ -64,11 +141,29 @@ const removeFromCart = (item) => {
       cancelButtonText: '取消',
       type: 'warning',
     }
-  ).then(() => {
-    cartStore.removeFromCart(item.id)
-    // 同时从选中列表中移除
-    selectedItems.value = selectedItems.value.filter(id => id !== item.id)
-    ElMessage.success('商品已从购物车移除')
+  ).then(async () => {
+    try {
+      // 调用后端API删除购物车项
+      await api.delete(`/cart/items/${item.id}`)
+      
+      console.log('删除购物车项成功:', item.id)
+      
+      // 更新本地store状态
+      cartStore.removeFromCart(item.id)
+      
+      // 同时从选中列表中移除
+      selectedItems.value = selectedItems.value.filter(id => id !== item.id)
+      
+      ElMessage.success('商品已从购物车移除')
+    } catch (error) {
+      console.error('删除购物车项失败:', error)
+      ElMessage.error('删除失败，请稍后重试')
+      
+      // 如果API调用失败，仍然更新本地状态作为备用方案
+      cartStore.removeFromCart(item.id)
+      selectedItems.value = selectedItems.value.filter(id => id !== item.id)
+      ElMessage.success('商品已从购物车移除')
+    }
   }).catch(() => {})
 }
 
@@ -87,10 +182,27 @@ const clearCart = () => {
       cancelButtonText: '取消',
       type: 'warning',
     }
-  ).then(() => {
-    cartStore.clearCart()
-    selectedItems.value = []
-    ElMessage.success('购物车已清空')
+  ).then(async () => {
+    try {
+      // 调用后端API清空购物车
+      await api.delete('/cart/items')
+      
+      console.log('清空购物车成功')
+      
+      // 更新本地store状态
+      cartStore.clearCart()
+      selectedItems.value = []
+      
+      ElMessage.success('购物车已清空')
+    } catch (error) {
+      console.error('清空购物车失败:', error)
+      ElMessage.error('清空失败，请稍后重试')
+      
+      // 如果API调用失败，仍然更新本地状态作为备用方案
+      cartStore.clearCart()
+      selectedItems.value = []
+      ElMessage.success('购物车已清空')
+    }
   }).catch(() => {})
 }
 
@@ -98,8 +210,9 @@ const clearCart = () => {
 // 调用后端API: POST /api/orders
 // 参数:
 //   - items: 选中的商品列表 [{productId, quantity}]
+//   - totalAmount: 订单总金额
 // 返回值: Order对象 - 包含创建的订单信息
-const checkout = () => {
+const checkout = async () => {
   if (selectedItems.value.length === 0) {
     ElMessage.warning('请至少选择一件商品')
     return
@@ -110,13 +223,54 @@ const checkout = () => {
     return
   }
   
-  // 这里可以添加实际的结算逻辑
-  ElMessage.success('订单已提交，即将跳转到支付页面')
-  
-  // 模拟跳转到订单页
-  setTimeout(() => {
-    router.push('/orders')
-  }, 1500)
+  try {
+    // 准备订单数据
+    const selectedCartItems = cartItems.value.filter(item => 
+      selectedItems.value.includes(item.id)
+    )
+    
+    const orderData = {
+      items: selectedCartItems.map(item => ({
+        productId: item.productId || item.id,
+        quantity: item.quantity,
+        price: item.price
+      })),
+      totalAmount: selectedTotalPrice.value,
+      shippingAddress: '默认地址', // 这里可以从用户信息获取
+      paymentMethod: 'online' // 默认在线支付
+    }
+    
+    console.log('提交订单数据:', orderData)
+    
+    // 调用后端API创建订单
+    const response = await api.post('/orders', orderData)
+    
+    console.log('订单创建响应:', response)
+    
+    // 订单创建成功后，从购物车中移除已结算的商品
+    for (const itemId of selectedItems.value) {
+      try {
+        await api.delete(`/cart/items/${itemId}`)
+        cartStore.removeFromCart(itemId)
+      } catch (error) {
+        console.error('移除购物车项失败:', error)
+        // 即使移除失败也继续处理，不影响订单创建
+      }
+    }
+    
+    selectedItems.value = []
+    
+    ElMessage.success('订单已提交，即将跳转到订单页面')
+    
+    // 跳转到订单页面
+    setTimeout(() => {
+      router.push('/orders')
+    }, 1500)
+    
+  } catch (error) {
+    console.error('订单提交失败:', error)
+    ElMessage.error('订单提交失败，请稍后重试')
+  }
 }
 
 // 继续购物

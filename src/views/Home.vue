@@ -57,16 +57,24 @@ const fetchProducts = async () => {
     error.value = ''
     
     // 调用后端API获取商品列表
+    console.log('正在调用API: GET /products')
     const response = await api.get('/products')
+    console.log('API响应数据:', response)
+    
+    // 由于api.js响应拦截器已经处理了{code, data, message}格式，
+    // 直接使用response获取商品数组数据
+    const productsData = Array.isArray(response) ? response : (response.data || [])
+    console.log('处理后的商品数据:', productsData)
     
     // 更新本地商品数据
-    products.value = response.data || []
+    products.value = productsData
     
-    // 提取商品分类（去重）
-    const categorySet = new Set(products.value.map(p => p.category))
+    // 提取商品分类（去重），过滤掉null值
+    const categorySet = new Set(products.value.map(p => p.category).filter(cat => cat !== null && cat !== undefined))
     categories.value = Array.from(categorySet)
     
     console.log('商品数据加载成功:', products.value.length, '个商品')
+    console.log('商品分类:', categories.value)
   } catch (err) {
     console.error('获取商品列表失败:', err)
     error.value = '获取商品列表失败，请稍后重试'
@@ -136,23 +144,54 @@ const goToProductDetail = (productId) => {
   router.push(`/product/${productId}`)
 }
 
-// 添加到购物车的动画效果
+// 添加到收藏的动画效果
 const showAddAnimation = ref(false)
 const animatingProductId = ref(null)
 
+// 用户收藏列表（用于检查商品是否已收藏）
+const userFavorites = ref([])
+
 /**
- * 添加商品到购物车
- * 接口地址: POST /api/cart/items
+ * 获取用户收藏列表
+ * 用于检查商品是否已被收藏
+ */
+const fetchUserFavorites = async () => {
+  if (!userStore.isAuthenticated) {
+    userFavorites.value = []
+    return
+  }
+  
+  try {
+    const response = await api.get('/user/favorites')
+    const favoritesData = Array.isArray(response) ? response : (response.data || [])
+    userFavorites.value = favoritesData
+    console.log('用户收藏列表:', userFavorites.value.length, '个商品')
+  } catch (error) {
+    console.error('获取用户收藏列表失败:', error)
+    userFavorites.value = []
+  }
+}
+
+/**
+ * 检查商品是否已收藏
+ */
+const isProductFavorited = (productId) => {
+  return userFavorites.value.some(fav => 
+    (fav.productId === productId) || (fav.product?.id === productId)
+  )
+}
+
+/**
+ * 添加商品到收藏
+ * 接口地址: POST /api/favorites
  * 请求参数: {
- *   productId: number, // 商品ID
- *   quantity: number   // 购买数量，默认为1
+ *   productId: number // 商品ID
  * }
  * 返回数据格式: {
  *   code: 200,
  *   data: {
- *     id: number,        // 购物车项ID
+ *     id: number,        // 收藏项ID
  *     productId: number, // 商品ID
- *     quantity: number,  // 数量
  *     addTime: string    // 添加时间
  *   },
  *   message: string
@@ -160,11 +199,10 @@ const animatingProductId = ref(null)
  * 主要处理逻辑:
  * 1. 检查用户登录状态
  * 2. 发送HTTP POST请求到后端Java服务
- * 3. 后端将购物车数据存储到MySQL数据库的cart_items表
+ * 3. 后端将收藏数据存储到MySQL数据库的favorites表
  * 4. 前端显示添加成功的动画效果
- * 5. 更新购物车图标的商品数量显示
  */
-const addToCart = async (product, event) => {
+const addToFavorites = async (product, event) => {
   // 阻止事件冒泡，避免触发卡片点击事件
   event.stopPropagation()
   
@@ -175,25 +213,47 @@ const addToCart = async (product, event) => {
     return
   }
   
+  // 检查商品是否已收藏
+  if (isProductFavorited(product.id)) {
+    ElMessage.warning(`${product.name} 已在收藏列表中`)
+    return
+  }
+  
   try {
     // 设置动画效果
     animatingProductId.value = product.id
     showAddAnimation.value = true
     
-    // 调用后端API添加到购物车
-    const response = await api.post('/cart/items', {
-      productId: product.id,
-      quantity: 1
+    // 调用后端API添加到收藏
+    const response = await api.post('/user/favorites', {
+      productId: product.id
     })
     
-    console.log('商品已添加到购物车:', response.data)
+    console.log('商品已添加到收藏:', response)
+    
+    // 更新本地收藏列表
+    const newFavorite = {
+      id: response.id || Date.now(), // 使用返回的ID或时间戳作为临时ID
+      productId: product.id,
+      addTime: new Date().toISOString(),
+      product: product
+    }
+    userFavorites.value.push(newFavorite)
     
     // 显示成功提示
-    ElMessage.success(`${product.name} 已添加到购物车`)
+    ElMessage.success(`${product.name} 已添加到收藏`)
     
   } catch (err) {
-    console.error('添加到购物车失败:', err)
-    ElMessage.error('添加到购物车失败，请稍后重试')
+    console.error('添加到收藏失败:', err)
+    
+    // 处理具体的错误情况
+    if (err.code === 409 || err.message?.includes('已收藏')) {
+      ElMessage.warning(`${product.name} 已在收藏列表中`)
+      // 刷新收藏列表以同步状态
+      fetchUserFavorites()
+    } else {
+      ElMessage.error('添加到收藏失败，请稍后重试')
+    }
   } finally {
     // 动画结束后重置
     setTimeout(() => {
@@ -211,10 +271,11 @@ const addToCart = async (product, event) => {
  * 3. 为后续的购物车、订单等功能预留接口调用位置
  */
 onMounted(async () => {
-  // 并行获取商品数据和分类数据，提高页面加载速度
+  // 并行获取商品数据、分类数据和用户收藏列表，提高页面加载速度
   await Promise.all([
     fetchProducts(),
-    fetchCategories()
+    fetchCategories(),
+    fetchUserFavorites()
   ])
 })
 </script>
@@ -287,13 +348,20 @@ onMounted(async () => {
           @click="goToProductDetail(product.id)"
         >
           <div class="product-image">
-            <img :src="product.image || 'https://picsum.photos/id/' + (product.id + 100) + '/300/200'" :alt="product.name">
+            <img :src="product.imageUrl || 'https://picsum.photos/id/' + (product.id + 100) + '/300/200'" :alt="product.name">
             <div 
-              class="add-to-cart-button" 
-              @click="addToCart(product, $event)"
-              :class="{ 'animate-add': showAddAnimation && animatingProductId === product.id }"
+              class="add-to-favorites-button" 
+              @click="addToFavorites(product, $event)"
+              :class="{ 
+                'animate-add': showAddAnimation && animatingProductId === product.id,
+                'favorited': isProductFavorited(product.id)
+              }"
+              :title="isProductFavorited(product.id) ? '已收藏' : '添加到收藏'"
             >
-              <el-icon><Plus /></el-icon>
+              <el-icon>
+                <StarFilled v-if="isProductFavorited(product.id)" />
+                <Star v-else />
+              </el-icon>
             </div>
           </div>
           <div class="product-info">
@@ -494,7 +562,7 @@ onMounted(async () => {
     transform: translateY(-8px);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
     
-    .add-to-cart-button {
+    .add-to-favorites-button {
       opacity: 1;
       transform: translateY(0);
     }
@@ -518,7 +586,7 @@ onMounted(async () => {
   }
 }
 
-.add-to-cart-button {
+.add-to-favorites-button {
   position: absolute;
   bottom: 15px;
   right: 15px;
@@ -543,6 +611,16 @@ onMounted(async () => {
   
   &.animate-add {
     animation: pulse 0.5s;
+  }
+  
+  &.favorited {
+    background-color: #f39c12;
+    opacity: 1;
+    transform: translateY(0);
+    
+    &:hover {
+      background-color: color.adjust(#f39c12, $lightness: -10%);
+    }
   }
 }
 

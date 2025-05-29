@@ -1,9 +1,11 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores'
 import { ElMessage } from 'element-plus'
 import api from '../services/api' // 导入API服务用于后端接口调用
 
+const router = useRouter()
 const userStore = useUserStore()
 
 // 用户信息
@@ -19,10 +21,13 @@ const fetchUserInfo = async () => {
   loadingUserInfo.value = true
   try {
     // 调用后端API获取最新的用户详细信息
-    const response = await api.get('/user/profile')
+    // 由于api.js响应拦截器已经处理了响应格式，直接获取data层数据
+    const userData = await api.get('/user/profile')
     
-    // 处理后端返回的嵌套数据结构
-    const userData = response.data.data
+    // 验证响应数据格式
+    if (!userData || typeof userData !== 'object') {
+      throw new Error('服务器响应数据格式错误')
+    }
     
     // 提取details对象中的数据
     const userDetails = userData.details || {}
@@ -73,9 +78,10 @@ const initFormWithUserData = (userData = null) => {
   avatarUrl.value = data.avatar || ''
 }
 
-// 组件挂载时获取用户信息
+// 组件挂载时获取用户信息和收藏列表
 onMounted(() => {
   fetchUserInfo()
+  fetchFavorites()
 })
 
 // 性别选项
@@ -148,46 +154,98 @@ const updateProfile = () => {
       loading.value = true
       
       try {
+        // 验证表单数据完整性
+        console.log('当前表单数据:', profileForm)
+        
+        // 确保必填字段不为空
+        if (!profileForm.nickname || !profileForm.email) {
+          ElMessage.error('昵称和邮箱不能为空')
+          loading.value = false
+          return
+        }
+        
         // 构建符合后端API格式的请求数据
         const requestData = {
-          nickname: profileForm.nickname,
-          email: profileForm.email,
-          phone: profileForm.phone,
+          nickname: profileForm.nickname || '',
+          email: profileForm.email || '',
+          phone: profileForm.phone || '',
           // 将用户详细信息放入details对象中
           details: {
-            description: profileForm.description,
-            avatar: profileForm.avatar,
-            gender: profileForm.gender,
-            age: profileForm.age,
+            description: profileForm.description || '',
+            avatar: profileForm.avatar || '',
+            gender: profileForm.gender || '保密',
+            age: profileForm.age ? parseInt(profileForm.age) : null, // 确保age是数字类型
             // 如果有多个地址，只使用第一个地址
             address: profileForm.addresses.length > 0 ? profileForm.addresses[0] : ''
           }
         }
         
+        // 调试日志：输出发送给后端的数据
+        console.log('发送给后端的数据:', JSON.stringify(requestData, null, 2))
+        
         // 调用后端API: PUT /api/users/profile
+        // 由于api.js响应拦截器已经处理了响应格式，直接获取data层数据
+        console.log('正在调用API: PUT /user/profile')
         const response = await api.put('/user/profile', requestData)
+        console.log('原始响应对象:', response)
         
-        // 处理后端返回的嵌套数据结构
-        const userData = response.data.data
-        const userDetails = userData.details || {}
+        // 获取响应数据
+        const responseData = response
+        console.log('处理后的响应数据:', responseData)
+        console.log('响应数据类型:', typeof responseData)
         
-        // 构建完整的用户信息对象
-        const completeUserData = {
-          username: userData.username,
-          nickname: userData.nickname,
-          email: userData.email,
-          phone: userData.phone,
-          description: userDetails.description || '',
-          avatar: userDetails.avatar || '',
-          age: userDetails.age || '',
-          gender: userDetails.gender || '保密',
-          addresses: userDetails.address ? [userDetails.address] : []
+        // 如果响应数据为null、undefined或空对象，但后端已经成功处理（根据用户反馈），
+        // 这可能是后端返回了空响应体，我们应该将其视为成功操作
+        if (!responseData || (typeof responseData === 'object' && Object.keys(responseData).length === 0)) {
+          console.log('收到空响应，但后端已成功处理，重新获取用户信息')
+          await fetchUserInfo()
+          ElMessage.success('个人信息更新成功')
+          return
         }
         
-        // 更新用户信息到本地存储
-        userStore.updateProfile(completeUserData)
-        
-        ElMessage.success('个人信息更新成功')
+        // 检查是否是简单操作结果（api.js拦截器包装后的格式：{result, message, code}）
+        if (responseData.result !== undefined && responseData.message) {
+          // 这是一个操作结果响应，更新成功但没有返回完整用户数据
+          // 需要重新获取用户信息
+          await fetchUserInfo()
+          ElMessage.success(responseData.message || '个人信息更新成功')
+        } else if (typeof responseData === 'object' && responseData.username) {
+          // 检查是否是完整的用户数据对象
+          // 这是包含完整用户数据的响应
+          const userData = responseData
+          
+          // 提取details对象中的数据
+          const userDetails = userData.details || {}
+          
+          // 构建完整的用户信息对象
+          const completeUserData = {
+            username: userData.username,
+            nickname: userData.nickname,
+            email: userData.email,
+            phone: userData.phone,
+            description: userDetails.description || '',
+            avatar: userDetails.avatar || '',
+            age: userDetails.age || '',
+            gender: userDetails.gender || '保密',
+            addresses: userDetails.address ? [userDetails.address] : []
+          }
+          
+          // 更新用户信息到本地存储
+          userStore.updateProfile(completeUserData)
+          
+          ElMessage.success('个人信息更新成功')
+        } else {
+          // 处理其他响应格式
+          console.warn('收到未预期的响应格式:', responseData)
+          // 如果响应中包含message，显示它；否则重新获取用户信息确保数据同步
+          if (responseData.message) {
+            ElMessage.success(responseData.message)
+          } else {
+            ElMessage.success('个人信息更新成功')
+          }
+          // 重新获取用户信息以确保数据同步
+          await fetchUserInfo()
+        }
       } catch (error) {
         ElMessage.error(error.message || '更新失败，请稍后再试')
         console.error('更新失败:', error)
@@ -214,15 +272,19 @@ const uploadAvatar = async (file) => {
     formData.append('file', file)
     
     // 调用后端API上传头像
-    const response = await api.post('/user/avatar', formData, {
+    // 由于api.js响应拦截器已经处理了响应格式，直接获取data层数据
+    const responseData = await api.post('/user/avatar', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
     })
     
-    // 从响应中获取头像URL
-    const avatarUrl = response.data.data.url
-    return avatarUrl
+    // 验证响应数据格式并获取头像URL
+    if (!responseData || !responseData.url) {
+      throw new Error('服务器未返回有效的头像URL')
+    }
+    
+    return responseData.url
   } catch (error) {
     console.error('头像上传失败:', error)
     throw error
@@ -335,34 +397,75 @@ const updatePassword = () => {
       passwordLoading.value = true
       
       try {
-        // 调用后端API: PUT /api/users/password
-        //   - currentPassword: 当前密码
-        //   - newPassword: 新密码
-        // 返回值: { code: 200, message: string }
-        // 主要处理逻辑: 后端Java验证当前密码，加密新密码并更新到MySQL数据库
-        await api.put('/users/password', {
-          currentPassword: passwordForm.currentPassword,
+        // 调用后端API: PUT /api/user/password
+        // 请求参数: { oldPassword: string, newPassword: string }
+        // 返回值: { code: 200, message: string, data: any }
+        const response = await api.put('/user/password', {
+          oldPassword: passwordForm.currentPassword,
           newPassword: passwordForm.newPassword
         })
+        
+        // 密码修改成功
+        ElMessage.success('密码修改成功')
         
         // 重置表单
         passwordForm.currentPassword = ''
         passwordForm.newPassword = ''
         passwordForm.confirmPassword = ''
         
-        ElMessage.success('密码更新成功')
+        // 可选：重置表单验证状态
+        passwordFormRef.value.resetFields()
+        
       } catch (error) {
-        // 处理特定错误，如密码不正确
-        if (error.response && error.response.status === 400) {
-          ElMessage.error('当前密码不正确')
-        } else {
-          ElMessage.error(error.message || '更新失败，请稍后再试')
+        console.error('密码修改失败:', error)
+        
+        // 处理业务逻辑错误（通过api拦截器处理的错误）
+        if (error.code) {
+          switch (error.code) {
+            case 401:
+              ElMessage.error('当前密码不正确，请重新输入')
+              break
+            case 403:
+              ElMessage.error('权限不足或登录已过期，请重新登录')
+              // 可选：跳转到登录页
+              // router.push('/login')
+              break
+            case 400:
+              ElMessage.error('请求参数错误，请检查输入信息')
+              break
+            default:
+              ElMessage.error(error.message || '密码修改失败，请稍后重试')
+          }
         }
-        console.error('更新失败:', error)
+        // 处理HTTP错误
+        else if (error.response) {
+          const { status } = error.response
+          switch (status) {
+            case 401:
+              ElMessage.error('当前密码不正确')
+              break
+            case 403:
+              ElMessage.error('权限不足，请重新登录')
+              break
+            case 422:
+              ElMessage.error('密码格式不符合要求')
+              break
+            case 500:
+              ElMessage.error('服务器内部错误，请稍后重试')
+              break
+            default:
+              ElMessage.error(error.message || '密码修改失败，请稍后重试')
+          }
+        }
+        // 处理网络错误
+        else {
+          ElMessage.error(error.message || '网络连接失败，请检查网络设置')
+        }
       } finally {
         passwordLoading.value = false
       }
     } else {
+      ElMessage.warning('请正确填写所有必填项')
       return false
     }
   })
@@ -370,6 +473,124 @@ const updatePassword = () => {
 
 // 活跃标签
 const activeTab = ref('profile')
+
+// 收藏相关状态
+const favorites = ref([])
+const favoritesLoading = ref(false)
+const favoritesError = ref('')
+
+/**
+ * 获取用户收藏列表
+ * 接口地址: GET /api/user/favorites
+ * 请求参数: 无
+ * 返回数据格式: {
+ *   code: 200,
+ *   data: [
+ *     {
+ *       id: number,        // 收藏项ID
+ *       productId: number, // 商品ID
+ *       addTime: string,   // 添加时间
+ *       product: {         // 商品详细信息
+ *         id: number,
+ *         name: string,
+ *         price: number,
+ *         imageUrl: string,
+ *         description: string,
+ *         category: string,
+ *         stock: number,
+ *         rating: number
+ *       }
+ *     }
+ *   ],
+ *   message: string
+ * }
+ */
+const fetchFavorites = async () => {
+  if (!userStore.isAuthenticated) return
+  
+  favoritesLoading.value = true
+  favoritesError.value = ''
+  
+  try {
+    console.log('正在获取收藏列表...')
+    const response = await api.get('/user/favorites')
+    console.log('收藏列表响应:', response)
+    
+    // 处理响应数据
+    const favoritesData = Array.isArray(response) ? response : (response.data || [])
+    favorites.value = favoritesData
+    
+    console.log('收藏列表加载成功:', favorites.value.length, '个商品')
+  } catch (error) {
+    console.error('获取收藏列表失败:', error)
+    favoritesError.value = '获取收藏列表失败，请稍后重试'
+    favorites.value = []
+  } finally {
+    favoritesLoading.value = false
+  }
+}
+
+/**
+ * 取消收藏商品
+ * 接口地址: DELETE /api/user/favorites/{favoriteId}
+ * 请求参数: favoriteId (路径参数)
+ * 返回数据格式: {
+ *   code: 200,
+ *   message: string
+ * }
+ */
+const removeFavorite = async (productName, productId) => {
+  try {
+    console.log('正在取消收藏:', { productName, productId })
+    
+    // 检查productId是否有效
+    if (!productId) {
+      console.error('productId为空或undefined')
+      ElMessage.error('商品ID无效，无法取消收藏')
+      return
+    }
+    await api.delete(`/user/favorites/${productId}`)
+    
+    // 从本地列表中移除 - 根据productId过滤
+    favorites.value = favorites.value.filter(fav => 
+      (fav.product?.id || fav.productId) !== productId
+    )
+    
+    ElMessage.success(`已取消收藏 ${productName}`)
+    console.log('取消收藏成功')
+  } catch (error) {
+    console.error('取消收藏失败:', error)
+    ElMessage.error('取消收藏失败，请稍后重试')
+  }
+}
+
+/**
+ * 跳转到商品详情页
+ */
+const goToProductDetail = (productId) => {
+  router.push(`/product/${productId}`)
+}
+
+/**
+ * 格式化收藏时间
+ */
+const formatFavoriteTime = (timeStr) => {
+  if (!timeStr) return '未知时间'
+  
+  try {
+    const date = new Date(timeStr)
+    return date.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  } catch (error) {
+    console.error('时间格式化失败:', error)
+    return '时间格式错误'
+  }
+}
 </script>
 
 <template>
@@ -654,8 +875,110 @@ const activeTab = ref('profile')
         
         <!-- 我的收藏标签 -->
         <el-tab-pane label="我的收藏" name="favorites">
-          <div class="profile-card empty-section">
-            <el-empty description="暂无收藏商品" />
+          <div class="profile-card">
+            <!-- 加载状态 -->
+            <div v-if="favoritesLoading" class="loading-container">
+              <el-skeleton :rows="3" animated />
+              <div class="loading-text">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                正在加载收藏商品...
+              </div>
+            </div>
+            
+            <!-- 错误状态 -->
+            <div v-else-if="favoritesError" class="error-container">
+              <el-alert
+                :title="favoritesError"
+                type="error"
+                show-icon
+                :closable="false"
+              >
+                <template #default>
+                  <p>{{ favoritesError }}</p>
+                  <el-button type="primary" size="small" @click="fetchFavorites" style="margin-top: 10px;">
+                    重新加载
+                  </el-button>
+                </template>
+              </el-alert>
+            </div>
+            
+            <!-- 收藏商品列表 -->
+            <div v-else-if="favorites.length > 0" class="favorites-list">
+              <div class="favorites-header">
+                <h3>我的收藏 ({{ favorites.length }})</h3>
+                <el-button type="primary" size="small" @click="fetchFavorites" :loading="favoritesLoading">
+                  刷新列表
+                </el-button>
+              </div>
+              
+              <div class="favorites-grid">
+                <div 
+                  v-for="favorite in favorites" 
+                  :key="favorite.id" 
+                  class="favorite-item"
+                >
+                  <div class="favorite-image" @click="goToProductDetail(favorite.product?.id || favorite.productId)">
+                    <img 
+                      :src="favorite.product?.imageUrl || `https://picsum.photos/id/${(favorite.productId || favorite.id) + 100}/300/200`" 
+                      :alt="favorite.product?.name || '商品图片'"
+                    >
+                  </div>
+                  
+                  <div class="favorite-info">
+                    <h4 class="favorite-name" @click="goToProductDetail(favorite.product?.id || favorite.productId)">
+                      {{ favorite.product?.name || '商品名称' }}
+                    </h4>
+                    
+                    <div class="favorite-meta">
+                      <span class="favorite-price">
+                        ¥{{ (favorite.product?.price || 0).toFixed(2) }}
+                      </span>
+                      
+                      <div class="favorite-rating" v-if="favorite.product?.rating">
+                        <el-rate 
+                          :model-value="favorite.product.rating" 
+                          disabled 
+                          size="small"
+                          text-color="#ff9900"
+                          :colors="['#ff9900', '#ff9900', '#ff9900']"
+                        ></el-rate>
+                      </div>
+                    </div>
+                    
+                    <div class="favorite-time">
+                      收藏时间: {{ formatFavoriteTime(favorite.addTime) }}
+                    </div>
+                    
+                    <div class="favorite-actions">
+                      <el-button 
+                        type="primary" 
+                        size="small" 
+                        @click="goToProductDetail(favorite.product?.id || favorite.productId)"
+                      >
+                        查看详情
+                      </el-button>
+                      <el-button 
+                        type="danger" 
+                        size="small" 
+                        plain
+                        @click="removeFavorite(favorite.product?.name || '该商品', favorite.product?.id || favorite.productId)"
+                      >
+                        取消收藏
+                      </el-button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- 无收藏商品状态 -->
+            <div v-else class="empty-container">
+              <el-empty description="暂无收藏商品">
+                <el-button type="primary" @click="$router.push('/')">
+                  去首页逛逛
+                </el-button>
+              </el-empty>
+            </div>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -891,6 +1214,160 @@ const activeTab = ref('profile')
   line-height: 50px !important;
 }
 
+/* 收藏列表样式 */
+.favorites-list {
+  .favorites-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #ebeef5;
+    
+    h3 {
+      font-size: 1.3rem;
+      font-weight: 600;
+      color: #333;
+      margin: 0;
+    }
+  }
+}
+
+.favorites-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.favorite-item {
+  background: white;
+  border: 1px solid #ebeef5;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: all 0.3s;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  
+  &:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  }
+}
+
+.favorite-image {
+  height: 200px;
+  overflow: hidden;
+  cursor: pointer;
+  
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.3s;
+  }
+  
+  &:hover img {
+    transform: scale(1.05);
+  }
+}
+
+.favorite-info {
+  padding: 16px;
+}
+
+.favorite-name {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: #333;
+  margin: 0 0 12px 0;
+  cursor: pointer;
+  transition: color 0.3s;
+  
+  &:hover {
+    color: #409eff;
+  }
+}
+
+.favorite-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.favorite-price {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #ff6b6b;
+}
+
+.favorite-rating {
+  display: flex;
+  align-items: center;
+}
+
+.favorite-time {
+  font-size: 0.9rem;
+  color: #999;
+  margin-bottom: 16px;
+}
+
+.favorite-actions {
+  display: flex;
+  gap: 8px;
+  
+  .el-button {
+    flex: 1;
+    border-radius: 8px;
+  }
+}
+
+/* 加载和错误状态样式 */
+.loading-container {
+  text-align: center;
+  padding: 40px 20px;
+  
+  .loading-text {
+    margin-top: 20px;
+    font-size: 1.1rem;
+    color: #666;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    
+    .el-icon {
+      font-size: 1.2rem;
+      color: #409eff;
+    }
+  }
+}
+
+.error-container {
+  margin: 40px 0;
+  
+  .el-alert {
+    border-radius: 12px;
+    padding: 20px;
+    
+    .el-button {
+      border-radius: 8px;
+    }
+  }
+}
+
+.empty-container {
+  margin: 60px 0;
+  
+  .el-empty {
+    padding: 40px 20px;
+    
+    .el-button {
+      border-radius: 8px;
+      padding: 10px 20px;
+    }
+  }
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
   .profile-card {
@@ -899,6 +1376,18 @@ const activeTab = ref('profile')
   
   .user-info-details {
     grid-template-columns: 1fr;
+  }
+  
+  .favorites-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .favorite-actions {
+    flex-direction: column;
+    
+    .el-button {
+      width: 100%;
+    }
   }
 }
 </style>
