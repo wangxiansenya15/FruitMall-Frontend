@@ -317,18 +317,33 @@ const goToLogin = () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: calc(100vh - 200px);
+  min-height: 100vh;
   padding: 40px 20px;
+  /* 添加背景图片设置 - 调整为显示完整图片 */
+  background-image: url('/images/goods/login_background.avif');
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  /* 添加渐变背景色作为图片周围的填充 */
+  background-color: #f5f5f7;
 }
 
 .register-card {
-  background-color: white;
+  /* 使用半透明白色背景，让背景图片透过来 */
+  background-color: rgba(255, 255, 255, 0.95);
+  /* 添加毛玻璃效果 */
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border-radius: 16px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  /* 增强阴影效果 */
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
   width: 100%;
   max-width: 580px;
   padding: 40px;
   animation: fadeIn 0.5s ease-out;
+  /* 添加边框增强视觉效果 */
+  border: 1px solid rgba(255, 255, 255, 0.2);
 
   :deep(.el-form-item) {
     margin-bottom: 24px;

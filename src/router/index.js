@@ -88,17 +88,21 @@ const routes = [
     }
   },
   {    path: '/admin/store-status',    name: 'AdminStoreStatus',    component: () => import('../views/admin/StoreStatus.vue'),    meta: {      requiresAuth: true,      requiresAdmin: true,      allowedRoles: ['ROLE_SUPER_ADMIN', 'ROLE_ADMIN'],      title: '商店状态'    }  },  {    path: '/admin/coupons',    name: 'AdminCoupons',    component: () => import('../views/admin/CouponManagement.vue'),    meta: {      requiresAuth: true,      requiresAdmin: true,      allowedRoles: ['ROLE_SUPER_ADMIN', 'ROLE_ADMIN'],      title: '优惠券管理'    }  },  {    path: '/admin/sales',    name: 'AdminSales',    component: () => import('../views/admin/SalesAnalytics.vue'),    meta: {      requiresAuth: true,      requiresAdmin: true,      allowedRoles: ['ROLE_SUPER_ADMIN', 'ROLE_ADMIN'],      title: '销售分析'    }  },  {    path: '/admin/store',    name: 'AdminStore',    component: () => import('../views/admin/StoreManagement.vue'),    meta: {      requiresAuth: true,      requiresAdmin: true,      allowedRoles: ['ROLE_SUPER_ADMIN', 'ROLE_ADMIN'],      title: '商店管理'    }  },
+  {    path: '/admin/users',    name: 'AdminUsers',    component: () => import('../views/admin/UserManagement.vue'),    meta: {      requiresAuth: true,      requiresAdmin: true,      allowedRoles: ['ROLE_SUPER_ADMIN', 'ROLE_ADMIN'],      title: '用户管理'    }
+  },
   {
-    path: '/admin/users',
-    name: 'AdminUsers',
-    component: () => import('../views/admin/UserManagement.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      allowedRoles: ['ROLE_SUPER_ADMIN', 'ROLE_ADMIN'],
-      title: '用户管理'
-    }
-  }]
+    path: '/store-info',
+    name: 'StoreInfo',
+    component: () => import('../views/StoreInfo.vue'),
+    meta: { title: '店铺信息' }
+  },
+  {
+    path: '/contact-us',
+    name: 'ContactUs',
+    component: () => import('../views/ContactUs.vue'),
+    meta: { title: '联系我们' }
+  }
+]
 
 const router = createRouter({
   history: createWebHistory(),

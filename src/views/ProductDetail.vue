@@ -87,15 +87,31 @@ const increaseQuantity = () => {
 //   - productId: 商品ID
 //   - quantity: 购买数量
 // 返回值: CartItem对象 - 包含添加的购物车项信息
-const addToCart = () => {
+const addToCart = async () => {
   if (!product.value) return
   
-  cartStore.addToCart(product.value, quantity.value)
+  // 检查用户登录状态，未登录时跳转到登录页面
+  if (!userStore.isAuthenticated) {
+    router.push(`/login?redirect=/product/${productId.value}`)
+    return
+  }
   
-  ElMessage.success(`已将 ${quantity.value} 件 ${product.value.name} 添加到购物车`)
-  
-  // 重置数量
-  quantity.value = 1
+  try {
+    await cartStore.addToCart(product.value, quantity.value)
+    ElMessage.success(`已将 ${quantity.value} 件 ${product.value.name} 添加到购物车`)
+    
+    // 重置数量
+    quantity.value = 1
+  } catch (error) {
+    console.error('添加到购物车失败:', error)
+    // 如果是401未授权错误，提示用户登录
+    if (error.response?.status === 401) {
+      ElMessage.warning('请先登录后再添加商品到购物车')
+      router.push(`/login?redirect=/product/${productId.value}`)
+    } else {
+      ElMessage.error('添加到购物车失败，请稍后重试')
+    }
+  }
 }
 
 // 立即购买

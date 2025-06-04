@@ -2,12 +2,29 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from './stores'
+import { useStoreManagementStore } from './stores'
 
 const router = useRouter()
 const userStore = useUserStore()
+const storeManagementStore = useStoreManagementStore()
 
 const isAuthenticated = computed(() => userStore.isAuthenticated)
 const isAdmin = computed(() => userStore.isAdmin)
+
+// 获取店铺状态
+const storeStatus = computed(() => storeManagementStore.storeStatus)
+const storeStatusText = computed(() => storeManagementStore.storeStatusText)
+
+// 获取状态颜色
+const getStatusColor = (status) => {
+  const statusColors = {
+    'open': '#4cd964',
+    'closed': '#ff6b6b', 
+    'holiday': '#f7ba2a',
+    'maintenance': '#909399'
+  }
+  return statusColors[status] || '#909399'
+}
 
 // 控制移动端菜单显示
 const isMobileMenuOpen = ref(false)
@@ -17,7 +34,9 @@ const navItems = [
   { name: '首页', path: '/' },
   { name: '购物车', path: '/cart', requiresAuth: true },
   { name: '订单', path: '/orders', requiresAuth: true },
-  { name: '个人信息', path: '/profile', requiresAuth: true }
+  { name: '个人信息', path: '/profile', requiresAuth: true },
+  { name: '店铺信息', path: '/store-info' },
+  { name: '联系我们', path: '/contact-us' }
 ]
 
 // 过滤导航项
@@ -34,6 +53,14 @@ const logout = () => {
 
 <template>
   <div class="app-container">
+    <!-- 顶部声明横幅 -->
+    <div class="announcement-banner">
+      <div class="banner-content">
+        <el-icon class="announcement-icon"><Bell /></el-icon>
+        <span class="announcement-text">本项目仅供个人参考和学习，切勿用于商业用途</span>
+      </div>
+    </div>
+    
     <!-- 顶部导航栏 - macOS风格 -->
     <header class="app-header">
       <div class="header-content">
@@ -42,6 +69,11 @@ const logout = () => {
             <el-icon><Apple /></el-icon>
             <span>水果商城</span>
           </router-link>
+          <!-- 店铺状态显示 -->
+          <div class="store-status-indicator">
+            <div class="status-dot" :style="{ backgroundColor: getStatusColor(storeStatus) }"></div>
+            <span class="status-text">{{ storeStatusText }}</span>
+          </div>
         </div>
         
         <!-- 桌面端导航 -->
@@ -63,7 +95,8 @@ const logout = () => {
         <!-- 用户操作区 -->
         <div class="user-actions">
           <template v-if="isAuthenticated">
-            <el-dropdown>
+            <!-- 桌面端下拉菜单 -->
+            <el-dropdown class="desktop-dropdown" trigger="click" :hide-on-click="true">
               <span class="user-dropdown">
                 <el-avatar :size="32" icon="UserFilled" />
                 <span>{{ userStore.user?.username }}</span>
@@ -87,6 +120,10 @@ const logout = () => {
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
+            <!-- 移动端用户头像按钮 -->
+            <div class="mobile-user-avatar" @click="isMobileMenuOpen = !isMobileMenuOpen">
+              <el-avatar :size="32" icon="UserFilled" />
+            </div>
           </template>
           <template v-else>
             <router-link to="/login" class="login-btn">
@@ -150,7 +187,7 @@ const logout = () => {
     <!-- 页脚 -->
     <footer class="app-footer">
       <div class="footer-content">
-        <p>© {{ new Date().getFullYear() }} 水果商城版权所有 - 提供新鲜水果配送服务</p>
+        <p>© {{ new Date().getFullYear() }} 该网站仅供个人参考和学习，切勿用于商业用途 </p>
       </div>
     </footer>
   </div>
@@ -189,6 +226,53 @@ ul {
   width: 100%;
 }
 
+/* 顶部声明横幅 */
+.announcement-banner {
+  background: linear-gradient(135deg, #ff6b6b, #ee5a52);
+  color: white;
+  padding: 8px 0;
+  text-align: center;
+  font-size: 0.9rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  
+  .banner-content {
+    max-width: 1400px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    
+    .announcement-icon {
+      font-size: 1rem;
+      animation: ring 2s infinite;
+    }
+    
+    .announcement-text {
+      font-weight: 500;
+    }
+  }
+}
+
+/* 喇叭摇摆动画 */
+@keyframes ring {
+  0%, 20%, 50%, 80%, 100% {
+    transform: rotate(0deg);
+  }
+  10% {
+    transform: rotate(-10deg);
+  }
+  30% {
+    transform: rotate(10deg);
+  }
+  60% {
+    transform: rotate(-5deg);
+  }
+  90% {
+    transform: rotate(5deg);
+  }
+}
+
 /* 顶部导航栏 - macOS风格 */
 .app-header {
   background-color: rgba(255, 255, 255, 0.8);
@@ -214,6 +298,7 @@ ul {
 .logo-container {
   display: flex;
   align-items: center;
+  gap: 20px;
 }
 
 .logo {
@@ -227,6 +312,45 @@ ul {
     margin-right: 10px;
     color: #ff6b6b;
     font-size: 2.2rem;
+  }
+}
+
+/* 店铺状态指示器 */
+.store-status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 6px 12px;
+  border-radius: 20px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+  
+  .status-text {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #333;
+  }
+}
+
+/* 状态点脉冲动画 */
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(76, 217, 100, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(76, 217, 100, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(76, 217, 100, 0);
   }
 }
 
@@ -328,6 +452,24 @@ ul {
   }
 }
 
+/* 移动端用户头像按钮 */
+.mobile-user-avatar {
+  display: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 50%;
+  transition: background-color 0.3s;
+  
+  &:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+  }
+  
+  &:active {
+    background-color: rgba(0, 0, 0, 0.1);
+    transform: scale(0.95);
+  }
+}
+
 /* 移动端菜单 */
 .mobile-menu-toggle {
   display: none;
@@ -368,6 +510,28 @@ ul {
       
       .el-icon {
         margin-right: 8px;
+      }
+    }
+    
+    /* 移动端用户信息区域样式 */
+    .mobile-user-section {
+      border-bottom: 1px solid #eee;
+      padding-bottom: 15px;
+      margin-bottom: 15px;
+      
+      .mobile-user-info {
+        display: flex;
+        align-items: center;
+        padding: 12px 10px;
+        background-color: rgba(52, 152, 219, 0.05);
+        border-radius: 8px;
+        
+        .username {
+          margin-left: 12px;
+          font-weight: 600;
+          font-size: 1.1rem;
+          color: #2c3e50;
+        }
       }
     }
   }
@@ -429,8 +593,22 @@ ul {
   }
   
   .mobile-menu-toggle {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
     font-size: 1.8rem;
+    border-radius: 8px;
+    transition: background-color 0.3s;
+    
+    &:hover {
+      background-color: rgba(0, 0, 0, 0.05);
+    }
+    
+    &:active {
+      background-color: rgba(0, 0, 0, 0.1);
+    }
   }
   
   .mobile-nav {
@@ -446,6 +624,16 @@ ul {
   .user-dropdown span {
     display: none;
   }
+  
+  .logo-container {
+    gap: 10px;
+  }
+  
+  .store-status-indicator {
+    .status-text {
+      display: none;
+    }
+  }
 }
 
 @media (min-width: 769px) and (max-width: 1200px) {
@@ -457,11 +645,55 @@ ul {
 @media (max-width: 768px) {
   .app-main {
     width: 100%;
-    padding: 20px 15px;
+    padding: var(--mobile-padding);
   }
   
   .header-content {
     height: 60px;
+    padding: 0 var(--mobile-padding);
+  }
+  
+  .announcement-banner {
+    padding: 6px 0;
+    font-size: 0.8rem;
+    
+    .banner-content {
+      padding: 0 var(--mobile-padding);
+      gap: 6px;
+    }
+  }
+  
+  .logo {
+    font-size: 1.5rem;
+    
+    .el-icon {
+      font-size: 1.8rem;
+    }
+  }
+  
+  .store-status-indicator {
+    padding: 4px 8px;
+    
+    .status-dot {
+      width: 6px;
+      height: 6px;
+    }
+  }
+  
+  .mobile-nav {
+    padding: var(--mobile-padding);
+    
+    ul {
+      gap: var(--mobile-margin);
+      
+      li a {
+        padding: var(--mobile-margin) 10px;
+        font-size: var(--mobile-font-size);
+        min-height: var(--touch-target-size);
+        display: flex;
+        align-items: center;
+      }
+    }
   }
 }
 </style>

@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useProductStore, useUserStore } from '../stores'
+import { ElMessage } from 'element-plus'
 import api from '../services/api'
 
 const router = useRouter()
@@ -163,7 +164,19 @@ const fetchUserFavorites = async () => {
   
   try {
     const response = await api.get('/user/favorites')
-    const favoritesData = Array.isArray(response) ? response : (response.data || [])
+    // 处理不同的响应结构：可能是数组，也可能包装在data或result中
+    let favoritesData = []
+    if (Array.isArray(response)) {
+      favoritesData = response
+    } else if (Array.isArray(response.data)) {
+      favoritesData = response.data
+    } else if (Array.isArray(response.result)) {
+      favoritesData = response.result
+    } else {
+      console.warn('收藏列表响应格式异常:', response)
+      favoritesData = []
+    }
+    
     userFavorites.value = favoritesData
     console.log('用户收藏列表:', userFavorites.value.length, '个商品')
   } catch (error) {
@@ -176,9 +189,18 @@ const fetchUserFavorites = async () => {
  * 检查商品是否已收藏
  */
 const isProductFavorited = (productId) => {
-  return userFavorites.value.some(fav => 
-    (fav.productId === productId) || (fav.product?.id === productId)
-  )
+  // 确保响应式更新：通过访问userFavorites.value来触发响应式依赖
+  const favorites = userFavorites.value
+  const isFavorited = favorites.some(fav => {
+    // 支持多种数据结构：直接的productId或嵌套的product.id
+    const favProductId = fav.productId || fav.product?.id
+    return favProductId === productId
+  })
+  
+  // 添加调试日志
+  console.log(`检查商品${productId}收藏状态:`, isFavorited, '收藏列表:', favorites.map(f => ({id: f.id, productId: f.productId || f.product?.id})))
+  
+  return isFavorited
 }
 
 /**
@@ -202,57 +224,84 @@ const isProductFavorited = (productId) => {
  * 3. 后端将收藏数据存储到MySQL数据库的favorites表
  * 4. 前端显示添加成功的动画效果
  */
-const addToFavorites = async (product, event) => {
+/**
+ * 切换收藏状态（添加或取消收藏）
+ */
+const toggleFavorite = async (product, event) => {
   // 阻止事件冒泡，避免触发卡片点击事件
   event.stopPropagation()
   
   // 检查用户是否已登录
   if (!userStore.isAuthenticated) {
     // 未登录用户跳转到登录页面
+    ElMessage.warning('请先登录后再操作')
     router.push('/login')
     return
   }
   
-  // 检查商品是否已收藏
-  if (isProductFavorited(product.id)) {
-    ElMessage.warning(`${product.name} 已在收藏列表中`)
-    return
-  }
+  const isFavorited = isProductFavorited(product.id)
   
   try {
     // 设置动画效果
     animatingProductId.value = product.id
     showAddAnimation.value = true
     
-    // 调用后端API添加到收藏
-    const response = await api.post('/user/favorites', {
-      productId: product.id
-    })
-    
-    console.log('商品已添加到收藏:', response)
-    
-    // 更新本地收藏列表
-    const newFavorite = {
-      id: response.id || Date.now(), // 使用返回的ID或时间戳作为临时ID
-      productId: product.id,
-      addTime: new Date().toISOString(),
-      product: product
+    if (isFavorited) {
+      // 取消收藏 - 直接使用商品ID
+      await api.delete(`/user/favorites/${product.id}`)
+      
+      // 从本地收藏列表中移除
+      userFavorites.value = userFavorites.value.filter(fav => 
+        !((fav.productId === product.id) || (fav.product?.id === product.id))
+      )
+      
+      // 确保响应式更新
+      await nextTick()
+      
+      ElMessage.success(`${product.name} 已取消收藏`)
+    } else {
+      // 添加到收藏
+      const response = await api.post('/user/favorites', {
+        productId: product.id
+      })
+      
+      console.log('商品已添加到收藏:', response)
+      
+      // 更新本地收藏列表
+      // 处理不同的响应结构：可能是直接的对象，也可能包装在result中
+      const favoriteData = response?.id ? response : (response?.result || response || {})
+      
+      // 确保有有效的ID，否则使用时间戳作为临时ID
+      const favoriteId = favoriteData?.id || Date.now()
+      const newFavorite = {
+        id: favoriteId,
+        productId: product.id,
+        addTime: favoriteData?.addTime || new Date().toISOString(),
+        product: product
+      }
+      userFavorites.value.push(newFavorite)
+      
+      // 确保响应式更新
+      await nextTick()
+      
+      ElMessage.success(`${product.name} 已添加到收藏`)
     }
-    userFavorites.value.push(newFavorite)
-    
-    // 显示成功提示
-    ElMessage.success(`${product.name} 已添加到收藏`)
     
   } catch (err) {
-    console.error('添加到收藏失败:', err)
+    console.error('收藏操作失败:', err)
     
-    // 处理具体的错误情况
+    // 根据错误类型显示不同的提示信息
     if (err.code === 409 || err.message?.includes('已收藏')) {
-      ElMessage.warning(`${product.name} 已在收藏列表中`)
-      // 刷新收藏列表以同步状态
-      fetchUserFavorites()
+      ElMessage.error(`${product.name} 已在收藏列表中`)
+    } else if (err.code === 404) {
+      ElMessage.error('商品不存在或已下架')
+    } else if (err.code === 401) {
+      ElMessage.warning('登录已过期，请重新登录')
+      router.push('/login')
     } else {
-      ElMessage.error('添加到收藏失败，请稍后重试')
+      // 对于其他错误，显示具体错误信息或通用提示
+      const errorMessage = err.message || '操作失败，请稍后重试'
+      ElMessage.error(errorMessage)
     }
   } finally {
     // 动画结束后重置
@@ -260,6 +309,37 @@ const addToFavorites = async (product, event) => {
       showAddAnimation.value = false
       animatingProductId.value = null
     }, 500)
+  }
+}
+
+/**
+ * 添加商品到购物车
+ */
+const addToCart = async (product, event) => {
+  // 阻止事件冒泡，避免触发卡片点击事件
+  event.stopPropagation()
+  
+  // 检查用户是否已登录
+  if (!userStore.isAuthenticated) {
+    ElMessage.warning('请先登录后再添加到购物车')
+    router.push('/login')
+    return
+  }
+  
+  try {
+    // 调用后端API添加到购物车
+    const response = await api.post('/cart/items', {
+      productId: product.id,
+      quantity: 1
+    })
+    
+    console.log('商品已添加到购物车:', response)
+    
+    ElMessage.success(`${product.name} 已添加到购物车`)
+    
+  } catch (err) {
+    console.error('添加到购物车失败:', err)
+    ElMessage.error('添加到购物车失败，请稍后重试')
   }
 }
 
@@ -349,14 +429,25 @@ onMounted(async () => {
         >
           <div class="product-image">
             <img :src="product.imageUrl || 'https://picsum.photos/id/' + (product.id + 100) + '/300/200'" :alt="product.name">
+            <!-- 添加到购物车按钮 -->
             <div 
-              class="add-to-favorites-button" 
-              @click="addToFavorites(product, $event)"
+              class="add-to-cart-button" 
+              @click="addToCart(product, $event)"
+              title="添加到购物车"
+            >
+              <el-icon>
+                <Plus />
+              </el-icon>
+            </div>
+            <!-- 收藏按钮 -->
+            <div 
+              class="favorite-button" 
+              @click="toggleFavorite(product, $event)"
               :class="{ 
                 'animate-add': showAddAnimation && animatingProductId === product.id,
                 'favorited': isProductFavorited(product.id)
               }"
-              :title="isProductFavorited(product.id) ? '已收藏' : '添加到收藏'"
+              :title="isProductFavorited(product.id) ? '取消收藏' : '添加到收藏'"
             >
               <el-icon>
                 <StarFilled v-if="isProductFavorited(product.id)" />
@@ -562,7 +653,12 @@ onMounted(async () => {
     transform: translateY(-8px);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
     
-    .add-to-favorites-button {
+    .add-to-cart-button {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    
+    .favorite-button {
       opacity: 1;
       transform: translateY(0);
     }
@@ -586,7 +682,32 @@ onMounted(async () => {
   }
 }
 
-.add-to-favorites-button {
+.add-to-cart-button {
+  position: absolute;
+  bottom: 15px;
+  left: 15px;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background-color: #4cd964;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.3s, transform 0.3s, background-color 0.3s;
+  z-index: 2;
+  font-size: 1.2rem;
+  
+  &:hover {
+    background-color: color.adjust(#4cd964, $lightness: -10%);
+    transform: translateY(0) scale(1.1);
+  }
+}
+
+.favorite-button {
   position: absolute;
   bottom: 15px;
   right: 15px;
@@ -623,6 +744,8 @@ onMounted(async () => {
     }
   }
 }
+
+
 
 @keyframes pulse {
   0% {
@@ -711,12 +834,14 @@ onMounted(async () => {
 /* 响应式设计 */
 @media (max-width: 992px) {
   .products-grid {
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--mobile-padding);
+    padding: 0 var(--mobile-padding);
   }
   
-  .product-image {
-    height: 220px;
+  .promo-section {
+    grid-template-columns: 1fr;
+    margin: 0 var(--mobile-padding);
   }
 }
 
@@ -726,13 +851,31 @@ onMounted(async () => {
       font-size: 1.5rem;
     }
     
+    p {
+      font-size: 1rem;
+      max-width: 100%;
+    }
+  }
+  
   .products-grid {
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--mobile-margin);
+    padding: 0 var(--mobile-padding);
+  }
+  
+  .product-card {
+    padding: var(--mobile-margin);
+    border-radius: 12px;
+    transition: transform 0.2s, box-shadow 0.2s;
+    
+    &:active {
+      transform: scale(0.98);
+    }
   }
   
   .product-image {
-    height: 180px;
+    height: 150px;
+    border-radius: 8px;
   }
   
   .product-info {
@@ -745,12 +888,6 @@ onMounted(async () => {
   
   .product-price {
     font-size: 1.2rem;
-  }
-    
-    p {
-      font-size: 1rem;
-      max-width: 100%;
-    }
   }
   
   .category-tabs {
@@ -770,16 +907,45 @@ onMounted(async () => {
 
 @media (max-width: 480px) {
   .products-grid {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 16px;
+    grid-template-columns: 1fr;
+    gap: var(--mobile-padding);
+    padding: 0 var(--mobile-padding);
+  }
+  
+  .product-card {
+    padding: var(--mobile-padding);
   }
   
   .product-image {
-    height: 150px;
+    height: 200px;
+  }
+  
+  .product-title {
+    font-size: var(--mobile-font-size);
+  }
+  
+  .product-price {
+    font-size: 18px;
+  }
+  
+  .add-to-cart-btn {
+    min-height: var(--touch-target-size);
+    font-size: 14px;
+    border-radius: 8px;
+    width: 100%;
   }
   
   .promo-section {
     grid-template-columns: 1fr;
+    margin: 0 var(--mobile-padding);
+  }
+  
+  .category-tabs {
+    padding: 0 var(--mobile-padding);
+    
+    .el-tabs__nav-wrap {
+      padding: 0;
+    }
   }
 }
 </style>
