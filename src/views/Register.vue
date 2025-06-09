@@ -93,6 +93,13 @@ const getVerificationCode = async () => {
     return
   }
   
+  // 验证邮箱格式
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  if (!emailRegex.test(registerForm.email)) {
+    ElMessage.error('请输入正确的邮箱格式')
+    return
+  }
+  
   try {    // 调用验证码接口 - 使用相对路径，通过Vite代理转发请求
     await api.post('/auth/code', {
       email: registerForm.email
@@ -144,12 +151,46 @@ const getVerificationCode = async () => {
   }
 }
 
+// 验证验证码
+const verifyCode = async () => {
+  if (!registerForm.verificationCode) {
+    ElMessage.warning('请输入验证码')
+    return false
+  }
+  
+  try {
+    loading.value = true
+    
+    // 调用后端API验证验证码
+    await api.post('/auth/verify', {
+      email: registerForm.email,
+      verificationCode: registerForm.verificationCode
+    })
+    
+    return true
+  } catch (error) {
+    if (typeof error === 'string') {
+      ElMessage.error(`验证码验证失败: ${error}`)
+    } else {
+      ElMessage.error(`验证码验证失败: ${error?.message || '验证码错误或已过期'}`)
+    }
+    console.error('验证码验证失败:', error)
+    return false
+  } finally {
+    loading.value = false
+  }
+}
+
 // 注册处理
 const handleRegister = () => {
   if (!registerFormRef.value) return
   
   registerFormRef.value.validate(async (valid) => {
     if (valid) {
+      // 先验证验证码
+      const isCodeVerified = await verifyCode()
+      if (!isCodeVerified) return
+      
       loading.value = true
       
       try {
@@ -222,7 +263,7 @@ const goToLogin = () => {
     <div class="register-card">
       <div class="register-header">
         <div class="logo">
-          <el-icon><Apple /></el-icon>
+          <img src="/images/login_background.avif" alt="水果商城" class="logo-image" />
         </div>
         <h1>创建账户</h1>
         <p>加入水果商城，享受新鲜水果配送服务</p>
@@ -320,8 +361,8 @@ const goToLogin = () => {
   min-height: 100vh;
   padding: 40px 20px;
   /* 添加背景图片设置 - 调整为显示完整图片 */
-  background-image: url('/images/goods/login_background.avif');
-  background-size: contain;
+  background-image: url('/images/login_background.avif');
+  background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
   background-attachment: fixed;
@@ -341,6 +382,8 @@ const goToLogin = () => {
   width: 100%;
   max-width: 580px;
   padding: 40px;
+  /* 确保在小屏幕上有足够的宽度 */
+  min-width: 320px;
   animation: fadeIn 0.5s ease-out;
   /* 添加边框增强视觉效果 */
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -377,9 +420,20 @@ const goToLogin = () => {
   margin-bottom: 30px;
   
   .logo {
-    font-size: 3rem;
-    color: #ff6b6b;
-    margin-bottom: 20px;
+    width: 60px;
+    height: 60px;
+    margin: 0 auto 20px;
+    background-color: #f5f5f7;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    
+    .logo-image {
+      width: 40px;
+      height: 40px;
+      object-fit: contain;
+    }
   }
   
   h1 {
@@ -421,29 +475,308 @@ const goToLogin = () => {
 }
 
 /* 响应式设计 */
-@media (max-width: 768px) {
+@media (max-width: 992px) {
+  .register-page {
+    padding: 20px 15px;
+  }
+  
   .register-card {
+    max-width: 450px;
+    padding: 35px 30px;
+  }
+}
+
+@media (max-width: 768px) {
+  .register-page {
+    padding: 15px 10px;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .register-card {
+    width: 100%;
+    max-width: 420px;
     padding: 30px 25px;
+    margin: 0;
   }
   
   .register-header {
+    margin-bottom: 25px;
+    
     .logo {
-      font-size: 2.5rem;
+      width: 55px;
+      height: 55px;
+      margin-bottom: 14px;
     }
     
     h1 {
       font-size: 1.8rem;
+      margin-bottom: 8px;
     }
+    
+    p {
+      font-size: 1rem;
+    }
+  }
+  
+  .el-form {
+    .el-form-item {
+      margin-bottom: 18px;
+      
+      .el-form-item__label {
+        font-size: 0.95rem;
+        padding-bottom: 6px;
+      }
+    }
+    
+    .el-input {
+      .el-input__inner {
+        height: 44px;
+        font-size: 1rem;
+        padding: 0 15px;
+      }
+    }
+    
+    .verification-group {
+      .el-input-group {
+        .el-input {
+          .el-input__inner {
+            height: 44px;
+          }
+        }
+        
+        .el-input-group__append {
+          .el-button {
+            height: 44px;
+            font-size: 0.9rem;
+            padding: 0 12px;
+          }
+        }
+      }
+    }
+    
+    .el-checkbox {
+      .el-checkbox__label {
+        font-size: 0.9rem;
+        line-height: 1.4;
+      }
+    }
+  }
+  
+  .register-actions {
+    margin-top: 25px;
+    
+    .el-button {
+      height: 46px;
+      font-size: 1rem;
+    }
+  }
+  
+  .login-link {
+    margin-top: 20px;
+    font-size: 0.95rem;
   }
 }
 
 @media (max-width: 480px) {
-  .register-card {
-    padding: 25px 20px;
+  .register-page {
+    padding: 10px 8px;
   }
   
-  .register-actions .el-button {
-    height: 44px;
+  .register-card {
+    padding: 25px 20px;
+    border-radius: 12px;
+    /* 增加手机版容器宽度 */
+    width: 90%;
+    min-width: 300px;
+  }
+  
+  .register-header {
+    margin-bottom: 20px;
+    
+    .logo {
+      width: 50px;
+      height: 50px;
+      margin-bottom: 12px;
+    }
+    
+    h1 {
+      font-size: 1.6rem;
+      margin-bottom: 6px;
+    }
+    
+    p {
+      font-size: 0.95rem;
+    }
+  }
+  
+  .el-form {
+    .el-form-item {
+      margin-bottom: 16px;
+      
+      .el-form-item__label {
+        font-size: 0.9rem;
+      }
+    }
+    
+    .el-input {
+      .el-input__inner {
+        height: 42px;
+        font-size: 0.95rem;
+        padding: 0 12px;
+      }
+    }
+    
+    .verification-group {
+      .el-input-group {
+        .el-input {
+          .el-input__inner {
+            height: 42px;
+            font-size: 0.95rem;
+          }
+        }
+        
+        .el-input-group__append {
+          .el-button {
+            height: 42px;
+            font-size: 0.85rem;
+            padding: 0 10px;
+          }
+        }
+      }
+    }
+    
+    .el-checkbox {
+      .el-checkbox__label {
+        font-size: 0.85rem;
+        line-height: 1.3;
+      }
+    }
+  }
+  
+  .register-actions {
+    margin-top: 20px;
+    
+    .el-button {
+      height: 44px;
+      font-size: 0.95rem;
+      border-radius: 6px;
+    }
+  }
+  
+  .login-link {
+    margin-top: 18px;
+    font-size: 0.9rem;
+  }
+}
+
+/* 超小屏幕适配 (iPhone SE等) */
+@media (max-width: 375px) {
+  .register-page {
+    padding: 8px 5px;
+  }
+  
+  .register-card {
+    padding: 20px 15px;
+    /* 调整超小屏幕的容器宽度 */
+    width: 95%;
+    min-width: 280px;
+  }
+  
+  .register-header {
+    .logo {
+      width: 45px;
+      height: 45px;
+    }
+    
+    h1 {
+      font-size: 1.5rem;
+    }
+    
+    p {
+      font-size: 0.9rem;
+    }
+  }
+  
+  .el-form {
+    .el-input {
+      .el-input__inner {
+        height: 40px;
+        font-size: 0.9rem;
+        padding: 0 10px;
+      }
+    }
+    
+    .verification-group {
+      .el-input-group {
+        .el-input {
+          .el-input__inner {
+            height: 40px;
+          }
+        }
+        
+        .el-input-group__append {
+          .el-button {
+            height: 40px;
+            font-size: 0.8rem;
+            padding: 0 8px;
+          }
+        }
+      }
+    }
+  }
+  
+  .register-actions {
+    .el-button {
+      height: 42px;
+      font-size: 0.9rem;
+    }
+  }
+}
+
+/* 横屏模式适配 */
+@media (max-height: 650px) and (orientation: landscape) {
+  .register-page {
+    padding: 10px;
+  }
+  
+  .register-card {
+    padding: 20px 25px;
+  }
+  
+  .register-header {
+    margin-bottom: 15px;
+    
+    .logo {
+      width: 40px;
+      height: 40px;
+      margin-bottom: 8px;
+    }
+    
+    h1 {
+      font-size: 1.4rem;
+      margin-bottom: 4px;
+    }
+    
+    p {
+      font-size: 0.9rem;
+    }
+  }
+  
+  .el-form {
+    .el-form-item {
+      margin-bottom: 12px;
+    }
+  }
+  
+  .register-actions {
+    margin-top: 15px;
+  }
+  
+  .login-link {
+    margin-top: 12px;
   }
 }
 </style>

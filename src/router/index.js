@@ -26,6 +26,12 @@ const routes = [
     meta: { title: '订单', requiresAuth: true }
   },
   {
+    path: '/orders/:id',
+    name: 'OrderDetail',
+    component: () => import('../views/OrderDetail.vue'),
+    meta: { title: '订单详情', requiresAuth: true }
+  },
+  {
     path: '/cart',
     name: 'Cart',
     component: () => import('../views/Cart.vue'),
@@ -101,6 +107,12 @@ const routes = [
     name: 'ContactUs',
     component: () => import('../views/ContactUs.vue'),
     meta: { title: '联系我们' }
+  },
+  {
+    path: '/forgot-password',
+    name: 'ForgotPassword',
+    component: () => import('../views/ForgotPassword.vue'),
+    meta: { title: '忘记密码' }
   }
 ]
 

@@ -1,13 +1,44 @@
 <script setup>
-import { computed } from 'vue'
-import { useStoreManagementStore } from '../stores'
+import { ref, computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
+import api from '@/services/api'
 
-const storeManagementStore = useStoreManagementStore()
+// 店铺信息数据
+const storeInfo = ref({
+  id: null,
+  name: '水果商城',
+  address: '暂无地址信息',
+  phone: '暂无联系电话',
+  email: '暂无邮箱信息',
+  openingHours: '暂无营业时间',
+  description: '暂无店铺描述',
+  status: 'closed',
+  openTime: null,
+  closeTime: null
+})
 
-// 获取店铺信息
-const storeInfo = computed(() => storeManagementStore.storeInfo)
-const storeStatus = computed(() => storeManagementStore.storeStatus)
-const storeStatusText = computed(() => storeManagementStore.storeStatusText)
+// 加载状态
+const loading = ref(false)
+
+// 状态映射 - 将后端状态映射为前端显示文本
+const statusMapping = {
+  '营业中': { key: 'open', text: '营业中' },
+  '休息中': { key: 'closed', text: '休息中' },
+  '节假日休息': { key: 'holiday', text: '节假日休息' },
+  '系统维护中': { key: 'maintenance', text: '系统维护中' }
+}
+
+// 计算属性 - 获取当前状态的key值
+const storeStatus = computed(() => {
+  const mapping = statusMapping[storeInfo.value.status]
+  return mapping ? mapping.key : 'closed'
+})
+
+// 计算属性 - 获取状态显示文本
+const storeStatusText = computed(() => {
+  const mapping = statusMapping[storeInfo.value.status]
+  return mapping ? mapping.text : storeInfo.value.status || '休息中'
+})
 
 // 获取状态颜色
 const getStatusColor = (status) => {
@@ -19,6 +50,67 @@ const getStatusColor = (status) => {
   }
   return statusColors[status] || '#909399'
 }
+
+// 获取所有店铺信息
+const fetchStoreList = async () => {
+  try {
+    loading.value = true
+    const response = await api.get('/store/list')
+    
+    if (response && Array.isArray(response) && response.length > 0) {
+      // 使用第一个店铺的信息
+      const firstStore = response[0]
+      storeInfo.value = {
+        id: firstStore.id,
+        name: firstStore.name || '水果商城',
+        address: firstStore.address || '暂无地址信息',
+        phone: firstStore.phone || '暂无联系电话',
+        email: firstStore.email || '暂无邮箱信息',
+        openingHours: firstStore.openingHours || 
+          (firstStore.openTime && firstStore.closeTime ? 
+            `${firstStore.openTime} - ${firstStore.closeTime}` : '暂无营业时间'),
+        description: firstStore.description || '专业的水果零售商城，为您提供新鲜优质的水果产品',
+        status: firstStore.status || '休息中',
+        openTime: firstStore.openTime,
+        closeTime: firstStore.closeTime
+      }
+    }
+  } catch (error) {
+    console.error('获取店铺信息失败:', error)
+    ElMessage.error('获取店铺信息失败，请稍后重试')
+  } finally {
+    loading.value = false
+  }
+}
+
+// 获取当前店铺状态
+const fetchCurrentStatus = async () => {
+  try {
+    const response = await api.get('/store/current-status')
+    
+    if (response && response.status) {
+      storeInfo.value.status = response.status
+      storeInfo.value.id = response.id
+      storeInfo.value.name = response.name || storeInfo.value.name
+      
+      // 更新营业时间
+      if (response.openTime && response.closeTime) {
+        storeInfo.value.openingHours = `${response.openTime} - ${response.closeTime}`
+        storeInfo.value.openTime = response.openTime
+        storeInfo.value.closeTime = response.closeTime
+      }
+    }
+  } catch (error) {
+    console.error('获取店铺状态失败:', error)
+    // 不显示错误消息，因为这是辅助信息
+  }
+}
+
+// 页面加载时获取数据
+onMounted(async () => {
+  await fetchStoreList()
+  await fetchCurrentStatus()
+})
 </script>
 
 <template>

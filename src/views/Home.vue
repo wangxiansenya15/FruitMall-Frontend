@@ -18,12 +18,32 @@ const categories = ref([])
 const loading = ref(false)
 const error = ref('')
 
+// 搜索功能
+const searchKeyword = ref('')
+
 // 分类筛选
 const selectedCategory = ref('')
+
+// 综合筛选：搜索 + 分类
 const filteredProducts = computed(() => {
-  return selectedCategory.value
-    ? products.value.filter(p => p.category === selectedCategory.value)
-    : products.value
+  let filtered = products.value
+  
+  // 按搜索关键词筛选
+  if (searchKeyword.value.trim()) {
+    const keyword = searchKeyword.value.trim().toLowerCase()
+    filtered = filtered.filter(p => 
+      p.name.toLowerCase().includes(keyword) ||
+      p.description?.toLowerCase().includes(keyword) ||
+      p.category?.toLowerCase().includes(keyword)
+    )
+  }
+  
+  // 按分类筛选
+  if (selectedCategory.value) {
+    filtered = filtered.filter(p => p.category === selectedCategory.value)
+  }
+  
+  return filtered
 })
 
 /**
@@ -104,14 +124,29 @@ const fetchProducts = async () => {
  */
 const fetchCategories = async () => {
   try {
+    console.log('正在获取商品分类...')
     const response = await api.get('/products/categories')
-    categories.value = response.data || []
+    console.log('分类API原始响应:', response)
+    
+    // 根据api.js响应拦截器的处理，直接使用response
+    // 如果response是数组，直接使用；否则尝试获取data字段
+    const categoriesData = Array.isArray(response) ? response : (response.data || response || [])
+    categories.value = categoriesData.filter(cat => cat !== null && cat !== undefined && cat !== '')
+    
     console.log('商品分类加载成功:', categories.value)
   } catch (err) {
     console.error('获取商品分类失败:', err)
+    console.error('错误详情:', err.message, err.response?.status)
+    
     // 如果分类API失败，从商品数据中提取分类
-    const categorySet = new Set(products.value.map(p => p.category))
-    categories.value = Array.from(categorySet)
+    if (products.value && products.value.length > 0) {
+      const categorySet = new Set(products.value.map(p => p.category).filter(cat => cat !== null && cat !== undefined && cat !== ''))
+      categories.value = Array.from(categorySet)
+      console.log('从商品数据中提取的分类:', categories.value)
+    } else {
+      categories.value = []
+      console.log('无法获取分类数据，设置为空数组')
+    }
   }
 }
 
@@ -351,12 +386,22 @@ const addToCart = async (product, event) => {
  * 3. 为后续的购物车、订单等功能预留接口调用位置
  */
 onMounted(async () => {
-  // 并行获取商品数据、分类数据和用户收藏列表，提高页面加载速度
-  await Promise.all([
-    fetchProducts(),
-    fetchCategories(),
-    fetchUserFavorites()
-  ])
+  try {
+    console.log('开始初始化首页数据...')
+    
+    // 先获取商品数据，确保有数据可用于分类提取
+    await fetchProducts()
+    
+    // 然后获取分类数据，如果失败会自动从商品数据中提取
+    await fetchCategories()
+    
+    // 最后获取用户收藏列表
+    await fetchUserFavorites()
+    
+    console.log('首页数据初始化完成')
+  } catch (error) {
+    console.error('首页数据初始化失败:', error)
+  }
 })
 </script>
 
@@ -376,16 +421,31 @@ onMounted(async () => {
       </el-carousel>
     </div>
     
-    <!-- 分类筛选 -->
+    <!-- 分类筛选和搜索 -->
     <div class="category-section">
       <h2 class="section-title">商品分类</h2>
-      <div class="category-tabs">
-        <el-radio-group v-model="selectedCategory" size="large" :disabled="loading">
-          <el-radio-button value="">全部</el-radio-button>
-          <el-radio-button v-for="category in categories" :key="category" :value="category">
-            {{ category }}
-          </el-radio-button>
-        </el-radio-group>
+      <div class="category-search-row">
+        <div class="category-tabs-container">
+          <el-radio-group v-model="selectedCategory" size="large" :disabled="loading" class="category-tabs">
+            <el-radio-button value="">全部</el-radio-button>
+            <el-radio-button v-for="category in categories" :key="category" :value="category">
+              {{ category }}
+            </el-radio-button>
+          </el-radio-group>
+        </div>
+        <div class="search-container">
+          <el-input
+            v-model="searchKeyword"
+            placeholder="搜索水果..."
+            size="large"
+            clearable
+            class="search-input"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+        </div>
       </div>
     </div>
     
@@ -521,10 +581,33 @@ onMounted(async () => {
 
 .home-container {
   position: relative;
+  /* 添加背景图片 - 使用高质量的background2.jpg */
+  background-image: url('/images/background2.jpg');
+  background-size: cover; /* 覆盖整个容器 */
+  background-position: center; /* 居中显示 */
+  background-repeat: no-repeat; /* 不重复 */
+  background-attachment: fixed; /* 固定背景，创造视差效果 */
+  min-height: 100vh; /* 确保至少占满视窗高度 */
+  padding-bottom: 40px;
 }
 
-.home-container {
-  padding-bottom: 40px;
+/* 添加半透明遮罩层，确保内容可读性 */
+.home-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.3); /* 降低透明度，让背景图片更清晰可见 */
+  backdrop-filter: blur(5px); /* 减少模糊效果，保持背景清晰度 */
+  z-index: 1;
+}
+
+/* 确保所有内容在遮罩层之上 */
+.home-container > * {
+  position: relative;
+  z-index: 2;
 }
 
 /* 轮播图样式 */
@@ -562,9 +645,9 @@ onMounted(async () => {
   }
 }
 
-/* 分类筛选样式 */
+/* 分类筛选和搜索样式 */
 .category-section {
-  margin-bottom: 30px;
+  margin-bottom: 20px;
 }
 
 .section-title {
@@ -572,16 +655,63 @@ onMounted(async () => {
   margin-bottom: 16px;
   font-weight: 600;
   color: #333;
+  text-align: center;
 }
 
-.category-tabs {
-  margin-bottom: 20px;
+.category-search-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 20px;
+}
+
+.category-tabs-container {
+  flex: 1;
   display: flex;
   justify-content: center;
 }
 
+.category-tabs {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.search-container {
+  flex: 0 0 250px;
+  max-width: 250px;
+}
+
+.search-input {
+  .el-input__wrapper {
+    border-radius: 20px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    transition: all 0.3s;
+    
+    &:hover {
+      box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12);
+    }
+    
+    &.is-focus {
+      box-shadow: 0 3px 12px rgba(255, 107, 107, 0.15);
+    }
+  }
+  
+  .el-input__inner {
+    font-size: 0.95rem;
+    padding: 0 15px;
+  }
+  
+  .el-input__prefix {
+    color: #999;
+  }
+}
+
 /* 商品列表样式 */
 .products-section {
+  margin-top: 20px;
   margin-bottom: 50px;
 }
 
@@ -890,6 +1020,16 @@ onMounted(async () => {
     font-size: 1.2rem;
   }
   
+  .category-search-row {
+    flex-direction: column;
+    gap: 15px;
+    padding: 0 15px;
+  }
+  
+  .category-tabs-container {
+    width: 100%;
+  }
+  
   .category-tabs {
     overflow-x: auto;
     padding-bottom: 10px;
@@ -897,7 +1037,15 @@ onMounted(async () => {
     
     .el-radio-group {
       white-space: nowrap;
+      display: flex;
+      min-width: 100%;
     }
+  }
+  
+  .search-container {
+    flex: none;
+    max-width: 100%;
+    width: 100%;
   }
   
   .promo-section {
@@ -940,11 +1088,40 @@ onMounted(async () => {
     margin: 0 var(--mobile-padding);
   }
   
-  .category-tabs {
+  .category-search-row {
+    flex-direction: column;
+    gap: 15px;
     padding: 0 var(--mobile-padding);
+  }
+  
+  .category-tabs-container {
+    width: 100%;
+    justify-content: center;
+  }
+  
+  .category-tabs {
+    justify-content: center;
     
-    .el-tabs__nav-wrap {
-      padding: 0;
+    .el-radio-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+    }
+    
+    .el-radio-button {
+      margin: 0;
+      flex: 0 0 auto;
+    }
+  }
+  
+  .search-container {
+    width: 100%;
+  }
+  
+  .search-input {
+    .el-input__inner {
+      font-size: 16px; /* 防止iOS缩放 */
     }
   }
 }

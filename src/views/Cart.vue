@@ -20,6 +20,18 @@ const totalItems = computed(() => cartStore.totalItems)
 const allSelected = ref(true)
 const selectedItems = ref([])
 
+// 订单信息弹窗相关
+const showOrderDialog = ref(false)
+const orderForm = ref({
+  shippingAddress: '',
+  consigneeName: '',
+  consigneePhone: '',
+  remark: ''
+})
+
+// 用户地址列表（从个人资料获取）
+const userAddresses = ref([])
+
 // 从后端获取购物车数据
 // 调用后端API: GET /api/cart/items
 // 参数: 无
@@ -143,13 +155,10 @@ const removeFromCart = (item) => {
     }
   ).then(async () => {
     try {
-      // 调用后端API删除购物车项
-      await api.delete(`/cart/items/${item.id}`)
+      // 使用store方法统一处理API调用和本地状态更新
+      await cartStore.removeFromCart(item.id)
       
       console.log('删除购物车项成功:', item.id)
-      
-      // 更新本地store状态
-      cartStore.removeFromCart(item.id)
       
       // 同时从选中列表中移除
       selectedItems.value = selectedItems.value.filter(id => id !== item.id)
@@ -157,12 +166,12 @@ const removeFromCart = (item) => {
       ElMessage.success('商品已从购物车移除')
     } catch (error) {
       console.error('删除购物车项失败:', error)
-      ElMessage.error('删除失败，请稍后重试')
       
-      // 如果API调用失败，仍然更新本地状态作为备用方案
-      cartStore.removeFromCart(item.id)
+      // 即使删除失败，也从选中列表中移除，避免界面状态不一致
       selectedItems.value = selectedItems.value.filter(id => id !== item.id)
-      ElMessage.success('商品已从购物车移除')
+      
+      // 显示友好的错误信息
+      ElMessage.error(error.message || '删除失败，请稍后重试')
     }
   }).catch(() => {})
 }
@@ -206,13 +215,25 @@ const clearCart = () => {
   }).catch(() => {})
 }
 
-// 结算
-// 调用后端API: POST /api/orders
-// 参数:
-//   - items: 选中的商品列表 [{productId, quantity}]
-//   - totalAmount: 订单总金额
-// 返回值: Order对象 - 包含创建的订单信息
-const checkout = async () => {
+// 获取用户地址列表
+const fetchUserAddresses = async () => {
+  try {
+    // 从用户个人资料获取地址信息
+    const response = await api.get('/user/profile')
+    const profile = response.data || response
+    userAddresses.value = profile.addresses || []
+    
+    // 如果有地址，默认选择第一个
+    if (userAddresses.value.length > 0) {
+      orderForm.value.shippingAddress = userAddresses.value[0]
+    }
+  } catch (error) {
+    console.error('获取用户地址失败:', error)
+  }
+}
+
+// 打开订单信息设置弹窗
+const openOrderDialog = async () => {
   if (selectedItems.value.length === 0) {
     ElMessage.warning('请至少选择一件商品')
     return
@@ -220,6 +241,54 @@ const checkout = async () => {
   
   if (!userStore.isAuthenticated) {
     router.push('/login?redirect=/cart')
+    return
+  }
+  
+  // 获取用户地址列表
+  await fetchUserAddresses()
+  
+  // 重置表单
+  orderForm.value = {
+    shippingAddress: userAddresses.value.length > 0 ? userAddresses.value[0] : '',
+    consigneeName: userStore.user?.nickname || '',
+    consigneePhone: userStore.user?.phone || '',
+    remark: ''
+  }
+  
+  showOrderDialog.value = true
+}
+
+// 确认提交订单
+// 调用后端API: POST /api/orders
+// 参数:
+//   - items: 选中的商品列表 [{productId, quantity}]
+//   - totalAmount: 订单总金额
+//   - shippingAddress: 收货地址
+//   - consigneeName: 收货人姓名
+//   - consigneePhone: 收货人电话
+//   - remark: 订单备注
+// 返回值: Order对象 - 包含创建的订单信息
+const confirmOrder = async () => {
+  // 验证必填字段
+  if (!orderForm.value.shippingAddress.trim()) {
+    ElMessage.warning('请填写收货地址')
+    return
+  }
+  
+  if (!orderForm.value.consigneeName.trim()) {
+    ElMessage.warning('请填写收货人姓名')
+    return
+  }
+  
+  if (!orderForm.value.consigneePhone.trim()) {
+    ElMessage.warning('请填写收货人电话')
+    return
+  }
+  
+  // 验证手机号格式
+  const phoneRegex = /^1[3-9]\d{9}$/
+  if (!phoneRegex.test(orderForm.value.consigneePhone)) {
+    ElMessage.warning('请输入正确的手机号码')
     return
   }
   
@@ -236,7 +305,10 @@ const checkout = async () => {
         price: item.price
       })),
       totalAmount: selectedTotalPrice.value,
-      shippingAddress: '默认地址', // 这里可以从用户信息获取
+      shippingAddress: orderForm.value.shippingAddress.trim(),
+      consigneeName: orderForm.value.consigneeName.trim(),
+      consigneePhone: orderForm.value.consigneePhone.trim(),
+      remark: orderForm.value.remark.trim(),
       paymentMethod: 'online' // 默认在线支付
     }
     
@@ -246,19 +318,39 @@ const checkout = async () => {
     const response = await api.post('/orders', orderData)
     
     console.log('订单创建响应:', response)
+    console.log('响应数据类型:', typeof response)
+    console.log('响应数据结构:', response)
+    
+    // 处理订单创建响应
+    let createdOrder = null
+    if (response && typeof response === 'object') {
+      if (response.data && typeof response.data === 'object') {
+        createdOrder = response.data
+        console.log('订单创建成功，订单信息:', createdOrder)
+      } else if (response.id || response.orderNumber) {
+        createdOrder = response
+        console.log('订单创建成功，订单信息:', createdOrder)
+      } else {
+        console.log('订单创建响应格式异常:', response)
+      }
+    }
     
     // 订单创建成功后，从购物车中移除已结算的商品
     for (const itemId of selectedItems.value) {
       try {
-        await api.delete(`/cart/items/${itemId}`)
-        cartStore.removeFromCart(itemId)
+        // 只调用store方法，它内部会处理API调用和本地状态更新
+        await cartStore.removeFromCart(itemId)
+        console.log('成功移除购物车商品:', itemId)
       } catch (error) {
         console.error('移除购物车项失败:', error)
         // 即使移除失败也继续处理，不影响订单创建
+        // 显示友好的错误提示，但不阻断流程
+        ElMessage.warning(`移除商品 ${itemId} 失败，请手动刷新购物车`)
       }
     }
     
     selectedItems.value = []
+    showOrderDialog.value = false
     
     ElMessage.success('订单已提交，即将跳转到订单页面')
     
@@ -272,6 +364,9 @@ const checkout = async () => {
     ElMessage.error('订单提交失败，请稍后重试')
   }
 }
+
+// 兼容原有的checkout函数名
+const checkout = openOrderDialog
 
 // 继续购物
 const continueShopping = () => {
@@ -381,7 +476,7 @@ const continueShopping = () => {
           </div>
           
           <div class="summary-actions">
-            <el-button type="primary" class="checkout-button" @click="checkout">
+            <el-button type="primary" class="checkout-button" @click="openOrderDialog">
               结算 ({{ selectedItems.length }})
             </el-button>
             
@@ -402,6 +497,97 @@ const continueShopping = () => {
         <el-button type="primary" @click="continueShopping">去购物</el-button>
       </el-empty>
     </div>
+    
+    <!-- 订单信息设置弹窗 -->
+    <el-dialog
+      v-model="showOrderDialog"
+      title="确认订单信息"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="orderForm" label-width="100px" label-position="left">
+        <el-form-item label="收货地址" required>
+          <el-select
+            v-if="userAddresses.length > 0"
+            v-model="orderForm.shippingAddress"
+            placeholder="请选择收货地址"
+            style="width: 100%"
+            filterable
+            allow-create
+          >
+            <el-option
+              v-for="(address, index) in userAddresses"
+              :key="index"
+              :label="address"
+              :value="address"
+            />
+          </el-select>
+          <el-input
+            v-else
+            v-model="orderForm.shippingAddress"
+            type="textarea"
+            :rows="2"
+            placeholder="请输入收货地址"
+          />
+        </el-form-item>
+        
+        <el-form-item label="收货人" required>
+          <el-input
+            v-model="orderForm.consigneeName"
+            placeholder="请输入收货人姓名"
+          />
+        </el-form-item>
+        
+        <el-form-item label="联系电话" required>
+          <el-input
+            v-model="orderForm.consigneePhone"
+            placeholder="请输入收货人电话"
+            maxlength="11"
+          />
+        </el-form-item>
+        
+        <el-form-item label="订单备注">
+          <el-input
+            v-model="orderForm.remark"
+            type="textarea"
+            :rows="3"
+            placeholder="请输入订单备注（选填）"
+            maxlength="200"
+            show-word-limit
+          />
+        </el-form-item>
+        
+        <!-- 订单摘要 -->
+        <el-divider>订单摘要</el-divider>
+        <div class="order-summary">
+          <div class="summary-item">
+            <span>商品数量：</span>
+            <span>{{ selectedItems.length }} 件</span>
+          </div>
+          <div class="summary-item">
+            <span>商品总价：</span>
+            <span>¥{{ selectedTotalPrice.toFixed(2) }}</span>
+          </div>
+          <div class="summary-item">
+            <span>运费：</span>
+            <span>免运费</span>
+          </div>
+          <div class="summary-item total">
+            <span>应付总额：</span>
+            <span>¥{{ selectedTotalPrice.toFixed(2) }}</span>
+          </div>
+        </div>
+      </el-form>
+      
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="showOrderDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmOrder">
+            确认提交订单
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -410,6 +596,15 @@ const continueShopping = () => {
 
 .cart-container {
   padding-bottom: 40px;
+  margin: 0 auto;
+  max-width: 1200px;
+  padding: 20px;
+  min-height: 100vh;
+  background-image: url('/images/background1.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
 }
 
 .cart-header {
@@ -564,14 +759,188 @@ const continueShopping = () => {
   text-align: center;
 }
 
+// 订单信息弹窗样式
+.order-summary {
+  .summary-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #f0f0f0;
+    
+    &:last-child {
+      border-bottom: none;
+    }
+    
+    &.total {
+      font-weight: 600;
+      font-size: 1.1rem;
+      color: #ff6b6b;
+      border-top: 2px solid #f0f0f0;
+      padding-top: 12px;
+      margin-top: 8px;
+    }
+  }
+}
+
+// Element Plus 弹窗样式覆盖
+:deep(.el-dialog) {
+  border-radius: 16px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+  
+  .el-dialog__header {
+    padding: 24px 24px 16px;
+    border-bottom: 1px solid #f0f0f0;
+    
+    .el-dialog__title {
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: #333;
+    }
+  }
+  
+  .el-dialog__body {
+    padding: 24px;
+  }
+  
+  .el-dialog__footer {
+    padding: 16px 24px 24px;
+    border-top: 1px solid #f0f0f0;
+    
+    .dialog-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+  }
+}
+
+:deep(.el-form) {
+  .el-form-item {
+    margin-bottom: 20px;
+    
+    .el-form-item__label {
+      font-weight: 500;
+      color: #333;
+    }
+    
+    .el-input__wrapper {
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      transition: all 0.3s ease;
+      
+      &:hover {
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+      }
+      
+      &.is-focus {
+        box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
+      }
+    }
+    
+    .el-textarea__inner {
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      transition: all 0.3s ease;
+      
+      &:hover {
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+      }
+      
+      &:focus {
+        box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
+      }
+    }
+    
+    .el-select {
+      .el-input__wrapper {
+        border-radius: 8px;
+      }
+    }
+  }
+}
+
+:deep(.el-divider) {
+  margin: 20px 0 16px;
+  
+  .el-divider__text {
+    font-weight: 500;
+    color: #666;
+  }
+}
+
+:deep(.el-button) {
+  border-radius: 8px;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  
+  &.el-button--primary {
+    background: linear-gradient(135deg, #409eff 0%, #5a9cff 100%);
+    border: none;
+    
+    &:hover {
+      background: linear-gradient(135deg, #337ecc 0%, #4a8cff 100%);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+    }
+  }
+  
+  &:not(.el-button--primary) {
+    &:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+  }
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
+  .cart-container {
+    padding: 10px;
+  }
+  
   .cart-content {
     grid-template-columns: 1fr;
+    gap: 16px;
   }
   
   .cart-summary {
     position: static;
+    order: -1;
+  }
+  
+  .product-info {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  
+  .product-image {
+    margin-right: 0;
+    margin-bottom: 12px;
+  }
+  
+  // 移动端弹窗适配
+  :deep(.el-dialog) {
+    width: 90% !important;
+    margin: 5vh auto;
+    
+    .el-dialog__body {
+      padding: 16px;
+    }
+    
+    .el-dialog__header {
+      padding: 16px 16px 12px;
+    }
+    
+    .el-dialog__footer {
+      padding: 12px 16px 16px;
+    }
+  }
+  
+  .order-summary {
+    .summary-item {
+      font-size: 0.9rem;
+    }
   }
 }
 </style>

@@ -50,6 +50,9 @@ const fetchUserInfo = async () => {
     // 更新用户信息到store
     userStore.updateProfile(completeUserData)
     
+    // 重置头像加载错误状态，确保头像能正常显示
+    avatarLoadError.value = false
+    
     // 更新表单数据
     initFormWithUserData(completeUserData)
   } catch (error) {
@@ -75,6 +78,7 @@ const initFormWithUserData = (userData = null) => {
   profileForm.age = data.age || ''
   profileForm.description = data.description || ''
   
+  // 同步更新头像URL，确保界面能够动态刷新
   avatarUrl.value = data.avatar || ''
 }
 
@@ -173,7 +177,7 @@ const updateProfile = () => {
           details: {
             description: profileForm.description || '',
             avatar: profileForm.avatar || '',
-            gender: profileForm.gender || '保密',
+            gender: profileForm.gender === '保密' ? null : profileForm.gender,
             age: profileForm.age ? parseInt(profileForm.age) : null, // 确保age是数字类型
             // 如果有多个地址，只使用第一个地址
             address: profileForm.addresses.length > 0 ? profileForm.addresses[0] : ''
@@ -264,6 +268,15 @@ const avatarUrl = ref('')
 // 头像上传状态
 const avatarUploading = ref(false)
 
+// 头像加载错误状态
+const avatarLoadError = ref(false)
+
+// 处理头像加载错误
+const handleAvatarLoadError = () => {
+  // 当头像图片加载失败时，显示上传图标
+  avatarLoadError.value = true
+}
+
 // 上传头像到服务器
 const uploadAvatar = async (file) => {
   try {
@@ -280,32 +293,92 @@ const uploadAvatar = async (file) => {
     })
     
     // 验证响应数据格式并获取头像URL
-    if (!responseData || !responseData.url) {
+    // 处理多种可能的响应格式
+    console.log('头像上传响应数据:', responseData)
+    
+    let avatarUrl = null
+    
+    // 尝试不同的响应格式
+     if (responseData) {
+       // 格式1: { result: "头像URL" } - 后端实际使用的格式
+       if (responseData.result) {
+         avatarUrl = responseData.result
+         // 去除可能存在的反引号包围
+         avatarUrl = avatarUrl.replace(/^`|`$/g, '').trim()
+       }
+       // 格式2: { url: "头像URL" }
+       else if (responseData.url) {
+         avatarUrl = responseData.url
+       }
+       // 格式3: { data: { url: "头像URL" } }
+       else if (responseData.data && responseData.data.url) {
+         avatarUrl = responseData.data.url
+       }
+       // 格式4: { avatar: "头像URL" }
+       else if (responseData.avatar) {
+         avatarUrl = responseData.avatar
+       }
+       // 格式5: { data: { avatar: "头像URL" } }
+       else if (responseData.data && responseData.data.avatar) {
+         avatarUrl = responseData.data.avatar
+       }
+       // 格式6: 直接是字符串URL
+       else if (typeof responseData === 'string' && responseData.startsWith('http')) {
+         avatarUrl = responseData
+       }
+     }
+    
+    if (!avatarUrl) {
+      console.error('无法从响应中提取头像URL，响应数据:', responseData)
       throw new Error('服务器未返回有效的头像URL')
     }
     
-    return responseData.url
+    console.log('提取到的头像URL:', avatarUrl)
+    return avatarUrl
   } catch (error) {
     console.error('头像上传失败:', error)
     throw error
   }
 }
 
-// 头像上传成功处理
-const handleAvatarSuccess = async (response, uploadFile) => {
+// 处理文件选择变化事件
+const handleAvatarChange = async (uploadFile) => {
+  if (!uploadFile || !uploadFile.raw) {
+    return
+  }
+  
+  // 验证文件格式和大小
+  const file = uploadFile.raw
+  const isJPG = file.type === 'image/jpeg'
+  const isPNG = file.type === 'image/png'
+  const isLt10M = file.size / 1024 / 1024 < 10
+
+  if (!isJPG && !isPNG) {
+    ElMessage.error('头像只能是JPG或PNG格式!')
+    return
+  }
+  if (!isLt10M) {
+    ElMessage.error('头像大小不能超过10MB!')
+    return
+  }
+  
   try {
     avatarUploading.value = true
     
     // 上传头像到服务器
     const newAvatarUrl = await uploadAvatar(uploadFile.raw)
     
-    // 更新头像URL
+    // 立即更新头像URL到本地状态，确保界面立即刷新
     avatarUrl.value = newAvatarUrl
     profileForm.avatar = newAvatarUrl
     
-    // 更新用户信息
+    // 重置头像加载错误状态，确保新头像能正常显示
+    avatarLoadError.value = false
+    
+    // 更新用户信息到store，确保头像URL立即生效
     const updatedUserData = {
       ...user.value,
+      avatar: newAvatarUrl,  // 直接在根级别设置avatar
       details: {
         ...user.value.details,
         avatar: newAvatarUrl
@@ -313,17 +386,23 @@ const handleAvatarSuccess = async (response, uploadFile) => {
     }
     userStore.updateProfile(updatedUserData)
     
+    // 重新获取用户信息以确保与后端完全同步
+    await fetchUserInfo()
+    
     ElMessage.success('头像上传成功')
   } catch (error) {
-    // 上传失败时使用本地预览
-    avatarUrl.value = URL.createObjectURL(uploadFile.raw)
-    profileForm.avatar = avatarUrl.value
-    
-    ElMessage.warning('头像已预览，但上传到服务器失败')
+    // 上传失败时直接显示错误，不使用本地预览避免混淆
+    ElMessage.error('头像上传失败，请重试')
     console.error('头像上传失败:', error)
   } finally {
     avatarUploading.value = false
   }
+}
+
+// 头像上传成功处理（保留用于兼容性）
+const handleAvatarSuccess = async (response, uploadFile) => {
+  // 这个方法现在主要用于兼容性，实际处理在handleAvatarChange中
+  console.log('头像上传成功回调', response, uploadFile)
 }
 
 const beforeAvatarUpload = (file) => {
@@ -333,11 +412,15 @@ const beforeAvatarUpload = (file) => {
 
   if (!isJPG && !isPNG) {
     ElMessage.error('头像只能是JPG或PNG格式!')
+    return false
   }
   if (!isLt10M) {
     ElMessage.error('头像大小不能超过10MB!')
+    return false
   }
-  return (isJPG || isPNG) && isLt2M
+  
+  // 文件验证通过后，立即触发上传
+  return true
 }
 
 // 安全设置相关
@@ -573,12 +656,37 @@ const goToProductDetail = (productId) => {
 
 /**
  * 格式化收藏时间
+ * 处理后端返回的数组格式时间 [year, month, day, hour, minute, second]
  */
-const formatFavoriteTime = (timeStr) => {
-  if (!timeStr) return '未知时间'
+const formatFavoriteTime = (timeData) => {
+  if (!timeData) return '未知时间'
   
   try {
-    const date = new Date(timeStr)
+    let date
+    
+    // 如果是数组格式 [2025, 6, 4, 22, 9, 11]
+    if (Array.isArray(timeData) && timeData.length >= 6) {
+      // 注意：JavaScript的月份是从0开始的，所以需要减1
+      date = new Date(
+        timeData[0], // 年
+        timeData[1] - 1, // 月（减1因为JS月份从0开始）
+        timeData[2], // 日
+        timeData[3], // 时
+        timeData[4], // 分
+        timeData[5] || 0 // 秒（可选）
+      )
+    } else if (typeof timeData === 'string') {
+      // 如果是字符串格式，直接解析
+      date = new Date(timeData)
+    } else {
+      return '时间格式不支持'
+    }
+    
+    // 检查日期是否有效
+    if (isNaN(date.getTime())) {
+      return '时间格式错误'
+    }
+    
     return date.toLocaleString('zh-CN', {
       year: 'numeric',
       month: '2-digit',
@@ -587,19 +695,20 @@ const formatFavoriteTime = (timeStr) => {
       minute: '2-digit'
     })
   } catch (error) {
-    console.error('时间格式化失败:', error)
+    console.error('时间格式化失败:', error, '原始数据:', timeData)
     return '时间格式错误'
   }
 }
 </script>
 
 <template>
-  <div class="profile-container">
-    <div class="profile-header">
-      <h1>个人中心</h1>
-    </div>
-    
-    <div class="profile-content">
+  <div class="profile-page">
+    <div class="container">
+      <div class="profile-header">
+        <h1>个人中心</h1>
+      </div>
+      
+      <div class="profile-content">
       <el-tabs v-model="activeTab" class="profile-tabs">
         <!-- 个人信息标签 -->
         <el-tab-pane label="个人信息" name="profile">
@@ -630,11 +739,15 @@ const formatFavoriteTime = (timeStr) => {
                       class="avatar-uploader"
                       action="#"
                       :show-file-list="false"
-                      :on-success="handleAvatarSuccess"
-                      :before-upload="beforeAvatarUpload"
+                      :on-change="handleAvatarChange"
                       :auto-upload="false"
                     >
-                      <img v-if="avatarUrl" :src="avatarUrl" class="avatar" />
+                      <img 
+                        v-if="(user?.avatar || avatarUrl) && !avatarLoadError" 
+                        :src="user?.avatar || avatarUrl" 
+                        class="avatar" 
+                        @error="handleAvatarLoadError"
+                      />
                       <el-icon v-else class="avatar-uploader-icon"><Plus /></el-icon>
                     </el-upload>
                     <div class="avatar-hint">点击上传头像</div>
@@ -946,7 +1059,7 @@ const formatFavoriteTime = (timeStr) => {
                     </div>
                     
                     <div class="favorite-time">
-                      收藏时间: {{ formatFavoriteTime(favorite.addTime) }}
+                      收藏时间: {{ formatFavoriteTime(favorite.createdTime) }}
                     </div>
                     
                     <div class="favorite-actions">
@@ -983,13 +1096,45 @@ const formatFavoriteTime = (timeStr) => {
         </el-tab-pane>
       </el-tabs>
     </div>
+    </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
 @use "sass:color";
-.profile-container {
-  padding-bottom: 40px;
+.profile-page {
+  padding: 20px 0 40px;
+  background-image: url('/images/background3.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  min-height: 100vh;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  position: relative;
+}
+
+.profile-page::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(15px) saturate(1.2);
+  -webkit-backdrop-filter: blur(15px) saturate(1.2);
+  z-index: -1;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 15px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .profile-header {
@@ -1004,14 +1149,20 @@ const formatFavoriteTime = (timeStr) => {
 }
 
 .profile-content {
-  background-color: white;
+  background-color: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border-radius: 12px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
   overflow: hidden;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .profile-tabs {
   padding: 0 20px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .profile-card {
@@ -1019,6 +1170,8 @@ const formatFavoriteTime = (timeStr) => {
   position: relative;
   max-width: 800px;
   margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* 用户信息展示栏样式 */
@@ -1027,7 +1180,9 @@ const formatFavoriteTime = (timeStr) => {
   flex-direction: column;
   align-items: center;
   padding: 30px;
-  background-color: #f9f9f9;
+  background-color: rgba(249, 249, 249, 0.8);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border-radius: 10px;
   margin-bottom: 30px;
   max-width: 700px;
@@ -1047,7 +1202,9 @@ const formatFavoriteTime = (timeStr) => {
   display: flex;
   align-items: center;
   padding: 15px;
-  background-color: white;
+  background-color: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
@@ -1119,12 +1276,30 @@ const formatFavoriteTime = (timeStr) => {
   max-width: 650px;
   margin: 0 auto;
   padding: 20px 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .password-form {
   max-width: 550px;
   margin: 0 auto;
   padding: 20px 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 768px) {
+  .form-section,
+  .password-form {
+    padding: 15px 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .form-section,
+  .password-form {
+    padding: 10px 8px;
+  }
 }
 
 .section-title {
@@ -1166,6 +1341,21 @@ const formatFavoriteTime = (timeStr) => {
   align-items: flex-start;
   gap: 10px;
   width: 100%;
+}
+
+.address-item-display {
+  padding: 8px 12px;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.addresses-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .remove-address-btn {
@@ -1369,24 +1559,493 @@ const formatFavoriteTime = (timeStr) => {
 }
 
 /* 响应式设计 */
-@media (max-width: 768px) {
-  .profile-card {
-    padding: 20px 10px;
+@media (max-width: 992px) {
+  .profile-page {
+    padding: 15px 10px;
   }
   
   .user-info-details {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+  }
+  
+  .favorites-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+  }
+}
+
+@media (max-width: 768px) {
+  .profile-page {
+    padding: 12px 0;
+    width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
+  }
+  
+  .profile-card {
+    padding: 20px 10px;
+    margin-bottom: 15px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  
+  .user-avatar {
+    width: 80px;
+    height: 80px;
+  }
+  
+  .user-info-details {
+    width: 100%;
+    gap: 12px;
+    padding: 0 5px;
+    box-sizing: border-box;
+  }
+  
+  .user-info-item {
+    padding: 12px 10px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  
+  .info-label {
+    font-size: 0.95rem;
+    min-width: 60px;
+  }
+  
+  .info-value {
+    font-size: 0.95rem;
+    word-break: break-word;
+  }
+  
+  .edit-profile-button {
+    margin-top: 15px;
+    align-self: center;
+    width: 100%;
+    
+    .el-button {
+      width: 100%;
+    }
+  }
+}
+
+/* 超小屏幕适配 */
+@media (max-width: 480px) {
+  .profile-page {
+    padding: 10px 0;
+  }
+  
+  .profile-card {
+    padding: 15px 8px;
+    border-radius: 8px;
+  }
+  
+  .user-info-details {
+    padding: 0 3px;
+  }
+  
+  .user-info-item {
+    padding: 10px 8px;
+  }
+  
+  .info-label {
+    font-size: 0.9rem;
+    min-width: 55px;
+  }
+  
+  .info-value {
+    font-size: 0.9rem;
+  }
+  
+  .avatar-section {
+    margin-bottom: 15px;
+  }
+  
+  .avatar-uploader {
+    width: 100px;
+    height: 100px;
+  }
+  
+  .avatar-uploader-icon {
+    width: 100px;
+    height: 100px;
+    line-height: 100px;
+    font-size: 28px;
+  }
+  
+  .avatar-hint {
+    font-size: 0.9rem;
+  }
+}
+
+.favorites-section {
+    padding: 20px 15px;
   }
   
   .favorites-grid {
     grid-template-columns: 1fr;
+    gap: 15px;
+  }
+  
+  .favorite-item {
+    display: flex;
+    flex-direction: row;
+    height: auto;
+  }
+  
+  .favorite-image {
+    width: 120px;
+    height: 120px;
+    flex-shrink: 0;
+  }
+  
+  .favorite-info {
+    flex: 1;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  
+  .favorite-name {
+    font-size: 1rem;
+    margin-bottom: 8px;
+    line-height: 1.3;
+  }
+  
+  .favorite-meta {
+    margin-bottom: 8px;
+  }
+  
+  .favorite-price {
+    font-size: 1.1rem;
+  }
+  
+  .favorite-time {
+    font-size: 0.85rem;
+    margin-bottom: 10px;
+  }
+  
+  .favorite-actions {
+    flex-direction: row;
+    gap: 8px;
+    
+    .el-button {
+      flex: 1;
+      height: 32px;
+      font-size: 0.85rem;
+      padding: 0 8px;
+    }
+  }
+  
+  .el-form {
+    .el-form-item {
+      margin-bottom: 16px;
+    }
+    
+    .el-button {
+      width: 100%;
+      height: 44px;
+    }
+  }
+  
+  /* 地址显示优化 */
+  .address-item-display {
+    padding: 8px 10px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    word-break: break-all;
+    overflow-wrap: break-word;
+    background-color: #f9f9f9;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  
+  .addresses-list {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .addresses-container {
+    gap: 10px;
+    width: 100%;
+  }
+  
+  .address-item {
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    box-sizing: border-box;
+    
+    .el-textarea {
+      width: 100%;
+    }
+    
+    .remove-address-btn {
+      align-self: flex-end;
+      margin-top: 0;
+    }
+  }
+  
+  .add-address-form {
+    gap: 8px;
+    
+    .add-address-btn {
+      align-self: stretch;
+      height: 40px;
+    }
+  }
+
+
+@media (max-width: 480px) {
+  .profile-page {
+    padding: 10px 5px;
+  }
+  
+  .profile-card {
+    padding: 15px 10px;
+    margin-bottom: 12px;
+  }
+  
+  .user-header {
+    flex-direction: column;
+    text-align: center;
+    gap: 15px;
+  }
+  
+  .user-avatar {
+    width: 70px;
+    height: 70px;
+    margin: 0 auto;
+  }
+  
+  .user-basic-info {
+    text-align: center;
+    
+    .username {
+      font-size: 1.3rem;
+      margin-bottom: 8px;
+    }
+    
+    .user-stats {
+      justify-content: center;
+      gap: 20px;
+      margin-top: 10px;
+    }
+  }
+  
+  .info-item {
+    padding: 10px 12px;
+    
+    .label {
+      font-size: 0.85rem;
+    }
+    
+    .value {
+      font-size: 0.95rem;
+    }
+  }
+  
+  .favorites-section {
+    padding: 15px 10px;
+  }
+  
+  .section-title {
+    font-size: 1.2rem;
+    margin-bottom: 15px;
+  }
+  
+  .favorite-item {
+    flex-direction: column;
+    height: auto;
+  }
+  
+  .favorite-image {
+    width: 100%;
+    height: 180px;
+  }
+  
+  .favorite-info {
+    padding: 12px;
+  }
+  
+  .favorite-name {
+    font-size: 0.95rem;
+    margin-bottom: 8px;
+  }
+  
+  .favorite-meta {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  
+  .favorite-price {
+    font-size: 1rem;
+  }
+  
+  .favorite-rating {
+    margin-top: 4px;
+  }
+  
+  .favorite-time {
+    font-size: 0.8rem;
+    margin-bottom: 12px;
   }
   
   .favorite-actions {
     flex-direction: column;
+    gap: 8px;
     
     .el-button {
       width: 100%;
+      height: 36px;
+      font-size: 0.9rem;
+    }
+  }
+  
+  .el-form {
+    .el-form-item {
+      margin-bottom: 14px;
+      
+      .el-form-item__label {
+        font-size: 0.9rem;
+        padding-bottom: 4px;
+      }
+    }
+    
+    .el-input, .el-select, .el-textarea {
+      font-size: 0.9rem;
+    }
+    
+    .el-button {
+      height: 42px;
+      font-size: 0.95rem;
+    }
+  }
+  
+  .loading-container, .error-container, .empty-container {
+    padding: 30px 15px;
+    
+    .loading-text {
+      font-size: 1rem;
+    }
+  }
+  
+  /* 地址显示进一步优化 */
+  .address-item-display {
+    padding: 8px 10px;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    word-break: break-all;
+    overflow-wrap: break-word;
+    hyphens: auto;
+  }
+  
+  .address-item {
+    .el-textarea {
+      :deep(.el-textarea__inner) {
+        font-size: 0.85rem;
+        line-height: 1.4;
+      }
+    }
+  }
+  
+  .add-address-form {
+    .el-input {
+      :deep(.el-textarea__inner) {
+        font-size: 0.85rem;
+        line-height: 1.4;
+      }
+    }
+  }
+}
+
+/* 超小屏幕适配 (iPhone SE等) */
+@media (max-width: 375px) {
+  .profile-page {
+    padding: 8px 3px;
+  }
+  
+  .profile-card {
+    padding: 12px 8px;
+  }
+  
+  .user-avatar {
+    width: 60px;
+    height: 60px;
+  }
+  
+  .username {
+    font-size: 1.2rem;
+  }
+  
+  .user-stats {
+    gap: 15px;
+    
+    .stat-item {
+      .stat-value {
+        font-size: 1.1rem;
+      }
+      
+      .stat-label {
+        font-size: 0.8rem;
+      }
+    }
+  }
+  
+  .favorite-image {
+    height: 160px;
+  }
+  
+  .favorite-actions {
+    .el-button {
+      height: 34px;
+      font-size: 0.85rem;
+    }
+  }
+  
+  /* 超小屏幕地址显示优化 */
+  .address-item-display {
+    padding: 6px 8px;
+    font-size: 0.8rem;
+    line-height: 1.3;
+    word-break: break-all;
+    overflow-wrap: break-word;
+    hyphens: auto;
+  }
+  
+  .addresses-container {
+    gap: 8px;
+  }
+  
+  .address-item {
+    .el-textarea {
+      :deep(.el-textarea__inner) {
+        font-size: 0.8rem;
+        line-height: 1.3;
+        padding: 8px;
+      }
+    }
+  }
+  
+  .add-address-form {
+    .el-input {
+      :deep(.el-textarea__inner) {
+        font-size: 0.8rem;
+        line-height: 1.3;
+        padding: 8px;
+      }
+    }
+    
+    .add-address-btn {
+      height: 36px;
+      font-size: 0.8rem;
     }
   }
 }

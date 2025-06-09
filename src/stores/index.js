@@ -21,11 +21,22 @@ export const useUserStore = defineStore('user', {
      * 请求参数: { username: string, password: string }
      * 返回数据: { code: 200, data: { user: UserInfo, token: string }, message: string }
      * 主要处理逻辑: 后端Java验证用户凭据，MySQL存储用户信息
+     * 用户状态验证: 检查userStatus、enabled、accountNonExpired、accountNonLocked、credentialsNonExpired
      */
-    login(userData) {
-      this.user = userData
+    login(userData, token) {
+      // 存储完整的用户信息，包括状态字段 - 简化为只使用userStatus枚举
+      this.user = {
+        ...userData,
+        // 确保包含用户状态字段，默认为ACTIVE
+        userStatus: userData.userStatus || 'ACTIVE'
+      }
       this.isAuthenticated = true
-      localStorage.setItem('user', JSON.stringify(userData))
+      localStorage.setItem('user', JSON.stringify(this.user))
+      
+      // 如果提供了token，也存储到localStorage
+      if (token) {
+        localStorage.setItem('token', token)
+      }
     },
     
     /**
@@ -89,27 +100,76 @@ export const useCartStore = defineStore('cart', {
      */
     async addToCart(product, quantity = 1) {
       try {
+        console.log('正在添加商品到购物车:', { productId: product.id, quantity })
+        
         const response = await api.post('/cart/items', {
           productId: product.id,
           quantity
         })
         
-        // 更新本地购物车总数量
-        this.totalCount = response.data.totalCount || 0
+        console.log('添加到购物车响应:', response)
+        console.log('响应数据类型:', typeof response)
+        console.log('响应数据结构:', response)
         
-        return response.data
+        // 安全地处理响应数据
+        let cartData = null
+        let totalCount = 0
+        
+        if (response && typeof response === 'object') {
+          if (response.data && typeof response.data === 'object') {
+            // 标准格式：{data: {totalCount: xx, ...}}
+            cartData = response.data
+            totalCount = response.data.totalCount || 0
+            console.log('检测到标准data格式')
+          } else if (response.totalCount !== undefined) {
+            // 直接格式：{totalCount: xx, ...}
+            cartData = response
+            totalCount = response.totalCount || 0
+            console.log('检测到直接对象格式')
+          } else {
+            console.log('未知的响应格式，使用默认处理:', response)
+            cartData = response
+          }
+        } else {
+          console.warn('响应数据格式异常:', response)
+        }
+        
+        // 更新本地购物车总数量
+        this.totalCount = totalCount
+        console.log('购物车总数量更新为:', this.totalCount)
+        
+        // 刷新购物车数据
+        await this.fetchCart()
+        
+        return cartData
       } catch (error) {
-        // 如果用户未登录，暂存到本地
+        console.error('添加到购物车失败:', {
+          productId: product.id,
+          quantity,
+          error: error.message,
+          code: error.code,
+          response: error.response?.data
+        })
+        
+        // 如果用户未登录或网络错误，暂存到本地
         const existingItem = this.items.find(item => item.id === product.id)
         
         if (existingItem) {
           existingItem.quantity += quantity
+          console.log('本地购物车商品数量更新:', existingItem)
         } else {
           this.items.push({ ...product, quantity })
+          console.log('商品添加到本地购物车:', { ...product, quantity })
         }
         
+        // 更新本地总数量
+        this.totalCount = this.items.reduce((sum, item) => sum + item.quantity, 0)
         this.saveCart()
-        throw error
+        
+        // 重新抛出更友好的错误信息
+        const friendlyError = new Error('添加到购物车失败，已暂存到本地')
+        friendlyError.originalError = error
+        throw friendlyError
       }
     },
     
@@ -120,13 +180,45 @@ export const useCartStore = defineStore('cart', {
      */
     async removeFromCart(productId) {
       try {
-        await api.delete(`/cart/items/${productId}`)
-        this.totalCount = Math.max(0, this.totalCount - 1)
-      } catch (error) {
-        // 本地备用逻辑
+        console.log('正在删除购物车商品:', productId)
+        const response = await api.delete(`/cart/items/${productId}`)
+        console.log('删除购物车商品响应:', response)
+        
+        // 从本地购物车中移除商品
+        const originalLength = this.items.length
         this.items = this.items.filter(item => item.id !== productId)
+        const removedCount = originalLength - this.items.length
+        
+        // 更新总数量
+        this.totalCount = Math.max(0, this.totalCount - removedCount)
+        
+        // 保存到本地存储
         this.saveCart()
-        throw error
+        
+        console.log('购物车商品删除成功，剩余商品数量:', this.items.length)
+      } catch (error) {
+        console.error('删除购物车商品失败:', {
+          productId,
+          error: error.message,
+          code: error.code,
+          response: error.response?.data
+        })
+        
+        // 即使API调用失败，也尝试从本地移除（用户体验优先）
+        const originalLength = this.items.length
+        this.items = this.items.filter(item => item.id !== productId)
+        const removedCount = originalLength - this.items.length
+        
+        if (removedCount > 0) {
+          this.totalCount = Math.max(0, this.totalCount - removedCount)
+          this.saveCart()
+          console.log('已从本地购物车移除商品，但服务器同步失败')
+        }
+        
+        // 重新抛出错误，但使用更友好的错误信息
+        const friendlyError = new Error('从购物车删除商品失败，请稍后重试')
+        friendlyError.originalError = error
+        throw friendlyError
       }
     },
     
@@ -159,28 +251,79 @@ export const useCartStore = defineStore('cart', {
     async fetchCart() {
       try {
         this.loading = true
+        console.log('正在获取购物车数据...')
+        
         const response = await api.get('/cart/items')
         console.log('购物车API响应:', response)
         console.log('响应数据类型:', typeof response)
+        console.log('响应数据结构:', response)
         
-        // 处理不同的API响应格式
-        if (Array.isArray(response)) {
-          // 如果直接返回数组
-          this.items = response
-        } else if (response && response.data && Array.isArray(response.data)) {
-          // 如果返回{data: CartItem[]}格式
-          this.items = response.data
+        // 安全地处理不同的API响应格式
+        let cartItems = []
+        
+        if (response === null || response === undefined) {
+          console.warn('购物车响应为空')
+          cartItems = []
+        } else if (Array.isArray(response)) {
+          // 如果直接返回数组格式
+          cartItems = response
+          console.log('检测到直接数组格式')
+        } else if (response && typeof response === 'object') {
+          if (Array.isArray(response.data)) {
+            // 如果返回{data: CartItem[]}格式
+            cartItems = response.data
+            console.log('检测到data数组格式')
+          } else if (response.data && Array.isArray(response.data.items)) {
+            // 如果返回{data: {items: CartItem[]}}格式
+            cartItems = response.data.items
+            console.log('检测到data.items数组格式')
+          } else if (response.items && Array.isArray(response.items)) {
+            // 如果返回{items: CartItem[]}格式
+            cartItems = response.items
+            console.log('检测到items数组格式')
+          } else {
+            console.log('未知的响应格式，设为空数组:', response)
+            cartItems = []
+          }
         } else {
-          // 其他情况，设为空数组
-          this.items = []
+          console.warn('无法解析的响应格式:', response)
+          cartItems = []
         }
         
-        this.totalCount = this.items.reduce((sum, item) => sum + item.quantity, 0)
-        console.log('购物车数据已设置:', this.items)
+        // 确保cartItems是有效的数组
+        if (!Array.isArray(cartItems)) {
+          console.warn('购物车数据不是数组格式，重置为空数组:', cartItems)
+          cartItems = []
+        }
+        
+        this.items = cartItems
+        this.totalCount = this.items.reduce((sum, item) => sum + (item.quantity || 0), 0)
+        
+        console.log('购物车数据已设置:', {
+          itemsCount: this.items.length,
+          totalCount: this.totalCount,
+          items: this.items
+        })
+        
+        // 保存到本地存储
+        this.saveCart()
+        
       } catch (error) {
-        console.error('获取购物车失败:', error)
-        this.items = []
-        this.totalCount = 0
+        console.error('获取购物车失败:', {
+          error: error.message,
+          code: error.code,
+          response: error.response?.data
+        })
+        
+        // 如果是401错误，清空购物车
+        if (error.response?.status === 401 || error.code === 401) {
+          console.log('用户未登录，清空购物车数据')
+          this.items = []
+          this.totalCount = 0
+        } else {
+          // 其他错误，保持现有数据不变
+          console.log('网络错误，保持现有购物车数据')
+        }
       } finally {
         this.loading = false
       }

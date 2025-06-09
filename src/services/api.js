@@ -24,7 +24,14 @@ api.interceptors.response.use(response => {
     
     // 如果有业务状态码，检查是否成功
     if (code !== undefined && code !== 200) {
-      const error = new Error(message || '业务逻辑错误');
+      console.error('API业务逻辑错误:', {
+        url: response.config?.url,
+        method: response.config?.method,
+        code,
+        message,
+        data
+      });
+      const error = new Error(message || '操作失败');
       error.code = code;
       error.response = response;
       return Promise.reject(error);

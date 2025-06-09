@@ -47,9 +47,8 @@ const submitForm = () => {
         await api.post('/msg/contact', {
           username: contactForm.value.username,
           email: contactForm.value.email,
-          subject: contactForm.value.subject,
           message: contactForm.value.message,
-          submitTime: new Date().toISOString()
+          problem: contactForm.value.subject
         })
         
         ElMessage.success('留言提交成功！我们会尽快回复您。')
@@ -71,26 +70,66 @@ const resetForm = () => {
   }
 }
 
-// 复制联系方式
+// 复制联系方式 - 兼容HTTP和HTTPS环境
 const copyToClipboard = async (text, type) => {
   try {
-    await navigator.clipboard.writeText(text)
-    ElMessage.success(`${type}已复制到剪贴板`)
+    // 优先使用现代 Clipboard API（需要HTTPS或localhost环境）
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+      ElMessage.success(`${type}已复制到剪贴板`)
+    } else {
+      // 降级方案：使用传统的 document.execCommand（兼容HTTP环境）
+      const textArea = document.createElement('textarea')
+      textArea.value = text
+      // 设置样式使其不可见但仍可操作
+      textArea.style.position = 'fixed'
+      textArea.style.left = '-9999px'
+      textArea.style.top = '-9999px'
+      textArea.style.opacity = '0'
+      textArea.style.pointerEvents = 'none'
+      textArea.style.tabIndex = '-1'
+      
+      document.body.appendChild(textArea)
+      textArea.focus()
+      textArea.select()
+      
+      try {
+        const successful = document.execCommand('copy')
+        if (successful) {
+          ElMessage.success(`${type}已复制到剪贴板`)
+        } else {
+          throw new Error('复制命令执行失败')
+        }
+      } catch (execErr) {
+        console.warn('execCommand复制失败:', execErr)
+        ElMessage.error('复制失败，请手动复制')
+      } finally {
+        // 清理临时元素
+        document.body.removeChild(textArea)
+      }
+    }
   } catch (err) {
+    console.error('复制功能异常:', err)
     ElMessage.error('复制失败，请手动复制')
   }
+}
+
+// 打开GitHub链接
+const openGitHub = () => {
+  window.open('https://github.com/wangxiansenya15/FruitMall-Frontend', '_blank')
 }
 </script>
 
 <template>
   <div class="contact-us-page">
-    <!-- 页面标题 -->
-    <div class="page-header">
-      <h1>联系我们</h1>
-      <p class="subtitle">有任何问题或建议，欢迎与我们联系</p>
-    </div>
+    <div class="container">
+      <!-- 页面标题 -->
+      <div class="page-header">
+        <h1>联系我们</h1>
+        <p class="subtitle">有任何问题或建议，欢迎与我们联系</p>
+      </div>
 
-    <div class="contact-container">
+      <div class="contact-container">
       <!-- 左侧：联系信息 -->
       <div class="contact-info">
         <div class="info-section">
@@ -101,11 +140,11 @@ const copyToClipboard = async (text, type) => {
           
           <div class="author-card">
             <div class="author-avatar">
-              <el-avatar :size="80" icon="UserFilled" />
+              <img src="/images/16c863604a4bd6fed468918a65a6fec.jpg" alt="作者头像" class="author-image" />
             </div>
             <div class="author-info">
               <h3>ArthurWang</h3>
-              <p class="title">全栈开发工程师</p>
+              <p class="title">全栈开发工程师 Java开发者</p>
               <p class="description">专注于现代Web技术栈，热爱开源项目</p>
             </div>
           </div>
@@ -120,12 +159,12 @@ const copyToClipboard = async (text, type) => {
           
           <div class="qr-code-card">
             <div class="qr-code">
-              <!-- 这里放置微信二维码图片 -->
-              <div class="qr-placeholder">
-                <el-icon><QrCode /></el-icon>
-                <p>微信二维码</p>
-                <small>扫码添加微信好友</small>
-              </div>
+              <!-- 使用真实的微信二维码图片 -->
+              <img 
+                src="/images/Wechat_QR_Code.jpg" 
+                alt="微信二维码" 
+                class="qr-image"
+              />
             </div>
             <div class="qr-info">
               <p><strong>微信号：</strong> wjbazj2021</p>
@@ -159,7 +198,7 @@ const copyToClipboard = async (text, type) => {
               <el-icon class="copy-icon"><CopyDocument /></el-icon>
             </div>
             
-            <div class="contact-item">
+            <div class="contact-item" @click="openGitHub">
               <div class="contact-icon">
                 <el-icon><Link /></el-icon>
               </div>
@@ -289,14 +328,31 @@ const copyToClipboard = async (text, type) => {
         </div>
       </div>
     </div>
+    </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
 .contact-us-page {
+  min-height: 100vh;
+  height: 100%; /* 确保高度覆盖整个容器 */
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  background-size: cover; /* 使用cover确保背景覆盖整个元素，不留空白 */
+  background-position: center center; /* 背景居中显示 */
+  background-repeat: no-repeat; /* 防止背景重复 */
+  background-attachment: fixed; /* 固定背景，在滚动时保持不动 */
+  padding: 40px 20px;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden; /* 防止水平溢出 */
+}
+
+.container {
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .page-header {
@@ -305,15 +361,17 @@ const copyToClipboard = async (text, type) => {
   
   h1 {
     font-size: 2.5rem;
-    color: #333;
+    color: #2c3e50;
     margin-bottom: 10px;
-    font-weight: 600;
+    font-weight: 700;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.1);
   }
   
   .subtitle {
     font-size: 1.1rem;
-    color: #666;
+    color: #5a6c7d;
     margin: 0;
+    font-weight: 500;
   }
 }
 
@@ -357,6 +415,20 @@ const copyToClipboard = async (text, type) => {
   .author-avatar {
     text-align: center;
     margin-bottom: 20px;
+    
+    .author-image {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid #f0f0f0;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      transition: transform 0.3s ease;
+      
+      &:hover {
+        transform: scale(1.05);
+      }
+    }
   }
   
   .author-info {
@@ -396,33 +468,17 @@ const copyToClipboard = async (text, type) => {
   .qr-code {
     margin-bottom: 20px;
     
-    .qr-placeholder {
+    .qr-image {
       width: 150px;
       height: 150px;
-      background: #f8f9fa;
-      border: 2px dashed #ddd;
       border-radius: 10px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      margin: 0 auto;
+      object-fit: cover;
+      border: 2px solid #f0f0f0;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      transition: transform 0.3s ease;
       
-      .el-icon {
-        font-size: 3rem;
-        color: #ccc;
-        margin-bottom: 10px;
-      }
-      
-      p {
-        margin: 0 0 5px;
-        font-weight: 600;
-        color: #666;
-      }
-      
-      small {
-        color: #999;
-        font-size: 0.8rem;
+      &:hover {
+        transform: scale(1.05);
       }
     }
   }
@@ -544,27 +600,518 @@ const copyToClipboard = async (text, type) => {
 
 /* 响应式设计 */
 @media (max-width: 992px) {
+  .contact-us-page {
+    padding: 20px 20px;
+    max-width: 100%;
+  }
+  
   .contact-container {
     grid-template-columns: 1fr;
-    gap: 30px;
+    gap: 25px;
+    max-width: 100%;
+  }
+  
+  .page-header {
+    margin-bottom: 30px;
+    
+    h1 {
+      font-size: 2.2rem;
+    }
+    
+    .subtitle {
+      font-size: 1.1rem;
+    }
   }
 }
 
 @media (max-width: 768px) {
   .contact-us-page {
-    padding: 15px;
+    padding: 20px 16px;
+    max-width: 100%;
+    min-height: 100vh;
+    height: auto;
+    background-attachment: scroll; /* 在移动设备上使用滚动背景 */
   }
   
-  .page-header h1 {
-    font-size: 2rem;
+  .container {
+    padding: 16px;
+    width: 100%;
+    box-sizing: border-box;
   }
   
+  .page-header {
+    margin-bottom: 25px;
+    text-align: center;
+    
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 8px;
+    }
+    
+    .subtitle {
+      font-size: 1rem;
+    }
+  }
+  
+  .contact-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    max-width: 100%;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  
+  .contact-info, .contact-form {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
   .author-card, .qr-code-card, .project-info, .message-form {
-    padding: 20px;
+    padding: 20px 16px;
+    border-radius: 12px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    margin: 0 auto 15px;
+  }
+  
+  .author-card {
+    .author-header {
+      flex-direction: column;
+      text-align: center;
+      gap: 15px;
+      
+      .author-avatar {
+        margin: 0 auto;
+      }
+      
+      .author-info {
+        text-align: center;
+        
+        .author-name {
+          font-size: 1.3rem;
+        }
+        
+        .author-title {
+          font-size: 1rem;
+        }
+        
+        .author-description {
+          font-size: 0.95rem;
+          margin-top: 8px;
+        }
+      }
+    }
+  }
+  
+  .contact-methods {
+    gap: 12px;
   }
   
   .contact-item {
-    padding: 15px;
+    padding: 15px 12px;
+    
+    .contact-icon {
+      width: 35px;
+      height: 35px;
+      
+      .el-icon {
+        font-size: 1rem;
+      }
+    }
+    
+    .contact-content {
+      .label {
+        font-size: 0.8rem;
+      }
+      
+      .value {
+        font-size: 0.95rem;
+      }
+    }
+  }
+  
+  .qr-code-card {
+    .qr-code {
+      width: 140px;
+      height: 140px;
+    }
+    
+    .qr-description {
+      font-size: 0.9rem;
+    }
+  }
+  
+  .project-info {
+    .tech-stack, .project-features {
+      margin-bottom: 20px;
+      
+      h4 {
+        font-size: 1rem;
+        margin-bottom: 12px;
+      }
+    }
+    
+    .tech-tags {
+      gap: 6px;
+      
+      .el-tag {
+        font-size: 0.8rem;
+        padding: 4px 8px;
+      }
+    }
+    
+    .project-features ul {
+      li {
+        font-size: 0.9rem;
+        line-height: 1.6;
+      }
+    }
+  }
+  
+  .message-form {
+    .el-form {
+      .el-form-item {
+        margin-bottom: 16px;
+        
+        .el-form-item__label {
+          font-size: 0.95rem;
+          padding-bottom: 6px;
+        }
+      }
+      
+      .el-input, .el-textarea {
+        .el-input__inner, .el-textarea__inner {
+          font-size: 0.95rem;
+        }
+      }
+      
+      .el-textarea {
+        .el-textarea__inner {
+          min-height: 100px;
+        }
+      }
+      
+      .form-actions {
+        .el-button {
+          width: 100%;
+          height: 44px;
+          font-size: 1rem;
+        }
+      }
+    }
+  }
+}
+
+@media (max-width: 480px) {
+  .contact-us-page {
+    padding: 16px 12px;
+    max-width: 100%;
+    min-height: 100vh;
+    height: auto;
+    overflow-x: hidden; /* 防止水平溢出 */
+  }
+  
+  .container {
+    padding: 12px;
+    width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
+  }
+  
+  .contact-container {
+    width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .page-header {
+    margin-bottom: 20px;
+    
+    h1 {
+      font-size: 1.8rem;
+      margin-bottom: 6px;
+    }
+    
+    .subtitle {
+      font-size: 0.95rem;
+    }
+  }
+  
+  .contact-container {
+    gap: 15px;
+    max-width: 100%;
+  }
+  
+  .contact-info, .contact-form {
+    width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
+  }
+  
+  .author-card, .qr-code-card, .project-info, .message-form {
+    padding: 16px 14px;
+    border-radius: 10px;
+    max-width: 100%;
+    box-sizing: border-box;
+    margin: 0 auto;
+  }
+  
+  .author-card {
+    .author-header {
+      gap: 12px;
+    }
+    
+    .author-avatar {
+      margin-bottom: 15px;
+      
+      .author-image {
+        width: 60px;
+        height: 60px;
+      }
+      
+      .author-info {
+        .author-name {
+          font-size: 1.2rem;
+        }
+        
+        .author-title {
+          font-size: 0.95rem;
+        }
+        
+        .author-description {
+          font-size: 0.9rem;
+        }
+      }
+    }
+  }
+  
+  .contact-methods {
+    gap: 10px;
+  }
+  
+  .contact-item {
+    padding: 12px 10px;
+    
+    .contact-icon {
+      width: 32px;
+      height: 32px;
+      
+      .el-icon {
+        font-size: 0.95rem;
+      }
+    }
+    
+    .contact-content {
+      .label {
+        font-size: 0.75rem;
+      }
+      
+      .value {
+        font-size: 0.9rem;
+      }
+    }
+  }
+  
+  .qr-code-card {
+    .qr-code {
+      width: 120px;
+      height: 120px;
+    }
+    
+    .qr-description {
+      font-size: 0.85rem;
+    }
+  }
+  
+  .project-info {
+    .tech-stack, .project-features {
+      margin-bottom: 15px;
+      
+      h4 {
+        font-size: 0.95rem;
+        margin-bottom: 10px;
+      }
+    }
+    
+    .tech-tags {
+      gap: 5px;
+      
+      .el-tag {
+        font-size: 0.75rem;
+        padding: 3px 6px;
+      }
+    }
+    
+    .project-features ul {
+      li {
+        font-size: 0.85rem;
+        line-height: 1.5;
+      }
+    }
+  }
+  
+  .message-form {
+    .el-form {
+      .el-form-item {
+        margin-bottom: 14px;
+        
+        .el-form-item__label {
+          font-size: 0.9rem;
+        }
+      }
+      
+      .el-input, .el-textarea {
+        .el-input__inner, .el-textarea__inner {
+          font-size: 0.9rem;
+          padding: 10px 12px;
+        }
+      }
+      
+      .el-input {
+        .el-input__inner {
+          height: 42px;
+        }
+      }
+      
+      .el-textarea {
+        .el-textarea__inner {
+          min-height: 90px;
+        }
+      }
+      
+      .form-actions {
+        .el-button {
+          height: 42px;
+          font-size: 0.95rem;
+          border-radius: 6px;
+        }
+      }
+    }
+  }
+}
+
+/* 超小屏幕适配 (iPhone SE等) */
+@media (max-width: 375px) {
+  .contact-us-page {
+    padding: 14px 10px;
+    max-width: 100%;
+    min-height: 100vh;
+    height: auto;
+    background-size: cover;
+    background-position: center top; /* 在小屏幕上从顶部开始显示背景 */
+    overflow-x: hidden; /* 防止水平溢出 */
+  }
+  
+  .container {
+    padding: 10px;
+    width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
+  }
+  
+  .contact-container {
+    width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
+  }
+  
+  .page-header {
+    h1 {
+      font-size: 1.6rem;
+    }
+    
+    .subtitle {
+      font-size: 0.9rem;
+    }
+  }
+  
+  .contact-info, .contact-form {
+    width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
+  }
+
+  .author-card, .qr-code-card, .project-info, .message-form {
+    padding: 14px 12px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    margin: 0 auto 12px;
+    overflow: hidden;
+  }
+  
+  .author-card {
+
+    
+    .author-avatar {
+      margin-bottom: 12px;
+      
+      .author-image {
+        width: 55px;
+        height: 55px;
+      }
+      
+      .author-info {
+        .author-name {
+          font-size: 1.1rem;
+        }
+        
+        .author-title {
+          font-size: 0.9rem;
+        }
+      }
+    }
+  }
+  
+  .contact-item {
+    padding: 10px 8px;
+    
+    .contact-icon {
+      width: 30px;
+      height: 30px;
+    }
+    
+    .contact-content {
+      .value {
+        font-size: 0.85rem;
+      }
+    }
+  }
+  
+  .qr-code-card {
+    .qr-code {
+      width: 100px;
+      height: 100px;
+    }
+  }
+  
+  .message-form {
+    .el-form {
+      .el-input {
+        .el-input__inner {
+          height: 40px;
+          font-size: 0.85rem;
+        }
+      }
+      
+      .el-textarea {
+        .el-textarea__inner {
+          min-height: 80px;
+          font-size: 0.85rem;
+        }
+      }
+      
+      .form-actions {
+        .el-button {
+          height: 40px;
+          font-size: 0.9rem;
+        }
+      }
+    }
   }
 }
 </style>

@@ -1,8 +1,9 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from './stores'
 import { useStoreManagementStore } from './stores'
+import api from '@/services/api'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -11,9 +12,23 @@ const storeManagementStore = useStoreManagementStore()
 const isAuthenticated = computed(() => userStore.isAuthenticated)
 const isAdmin = computed(() => userStore.isAdmin)
 
+// 店铺状态数据
+const currentStoreStatus = ref('')
+const currentStatusText = ref('加载中...')
+
 // 获取店铺状态
-const storeStatus = computed(() => storeManagementStore.storeStatus)
-const storeStatusText = computed(() => storeManagementStore.storeStatusText)
+const storeStatus = computed(() => {
+  // 状态映射：后端状态 -> 前端状态
+  const statusMap = {
+    '营业中': 'open',
+    '休息中': 'closed',
+    '节假日休息': 'holiday',
+    '系统维护': 'maintenance'
+  }
+  return statusMap[currentStoreStatus.value] || 'closed'
+})
+
+const storeStatusText = computed(() => currentStatusText.value)
 
 // 获取状态颜色
 const getStatusColor = (status) => {
@@ -28,6 +43,9 @@ const getStatusColor = (status) => {
 
 // 控制移动端菜单显示
 const isMobileMenuOpen = ref(false)
+
+// 头像加载状态
+const avatarLoading = ref(false)
 
 // 导航菜单项
 const navItems = [
@@ -44,11 +62,59 @@ const filteredNavItems = computed(() => {
   return navItems.filter(item => !item.requiresAuth || isAuthenticated.value)
 })
 
+// 获取店铺状态
+const fetchStoreStatus = async () => {
+  try {
+    const response = await api.get('/store/current-status')
+    if (response && response.status) {
+      currentStoreStatus.value = response.status
+      currentStatusText.value = response.status
+    }
+  } catch (error) {
+    console.error('获取店铺状态失败:', error)
+    // 使用默认状态
+    currentStoreStatus.value = '营业中'
+    currentStatusText.value = '营业中'
+  }
+}
+
 // 登出
 const logout = () => {
   userStore.logout()
   router.push('/login')
 }
+
+// 监听用户头像变化，设置加载状态
+watch(
+  () => userStore.user?.avatar,
+  (newAvatar, oldAvatar) => {
+    // 当头像URL发生变化时，显示加载状态
+    if (newAvatar && newAvatar !== oldAvatar) {
+      avatarLoading.value = true
+      
+      // 创建一个新的Image对象来预加载头像
+      const img = new Image()
+      img.onload = () => {
+        // 头像加载完成，隐藏加载状态
+        avatarLoading.value = false
+      }
+      img.onerror = () => {
+        // 头像加载失败，也隐藏加载状态
+        avatarLoading.value = false
+      }
+      img.src = newAvatar
+    } else if (!newAvatar) {
+      // 如果没有头像URL，直接隐藏加载状态
+      avatarLoading.value = false
+    }
+  },
+  { immediate: true } // 立即执行一次，处理初始状态
+)
+
+// 组件挂载时获取店铺状态
+onMounted(() => {
+  fetchStoreStatus()
+})
 </script>
 
 <template>
@@ -57,7 +123,7 @@ const logout = () => {
     <div class="announcement-banner">
       <div class="banner-content">
         <el-icon class="announcement-icon"><Bell /></el-icon>
-        <span class="announcement-text">本项目仅供个人参考和学习，切勿用于商业用途</span>
+        <span class="announcement-text">作者声明：本项目仅供个人参考和学习，切勿用于商业用途 | 手机打开后导航栏在右上角⬛展开，注册时需要用到能接收验证码的邮箱📮，新增在线留言功能（位于 联系我们——> 在线留言），欢迎大家积极参与反馈！</span>
       </div>
     </div>
     
@@ -66,7 +132,7 @@ const logout = () => {
       <div class="header-content">
         <div class="logo-container">
           <router-link to="/" class="logo">
-            <el-icon><Apple /></el-icon>
+            <img src="/images/logo.png" alt="水果商城" class="logo-image" />
             <span>水果商城</span>
           </router-link>
           <!-- 店铺状态显示 -->
@@ -98,7 +164,12 @@ const logout = () => {
             <!-- 桌面端下拉菜单 -->
             <el-dropdown class="desktop-dropdown" trigger="click" :hide-on-click="true">
               <span class="user-dropdown">
-                <el-avatar :size="32" icon="UserFilled" />
+                <el-avatar 
+                  :size="32" 
+                  :src="userStore.user?.avatar" 
+                  icon="UserFilled"
+                  :loading="avatarLoading"
+                />
                 <span>{{ userStore.user?.username }}</span>
                 <el-icon><ArrowDown /></el-icon>
               </span>
@@ -122,7 +193,12 @@ const logout = () => {
             </el-dropdown>
             <!-- 移动端用户头像按钮 -->
             <div class="mobile-user-avatar" @click="isMobileMenuOpen = !isMobileMenuOpen">
-              <el-avatar :size="32" icon="UserFilled" />
+              <el-avatar 
+                :size="32" 
+                :src="userStore.user?.avatar" 
+                icon="UserFilled"
+                :loading="avatarLoading"
+              />
             </div>
           </template>
           <template v-else>
@@ -308,10 +384,11 @@ ul {
   font-weight: 600;
   color: #333;
   
-  .el-icon {
+  .logo-image {
+    width: 32px;
+    height: 32px;
     margin-right: 10px;
-    color: #ff6b6b;
-    font-size: 2.2rem;
+    object-fit: contain;
   }
 }
 
